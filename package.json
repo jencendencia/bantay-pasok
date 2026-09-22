@@ -1,0 +1,83 @@
+{
+  "name": "bantay-pasok",
+  "productName": "Bantay Pasok",
+  "version": "1.0.1",
+  "description": "Real-time teachers and students attendance monitoring with QR scanning and parent SMS",
+  "main": "dist-electron/electron/main.js",
+  "author": "Bantay Pasok",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build": "vite build && npm run build:electron",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "start": "npm run build && electron .",
+    "icon": "node scripts/gen-icon.js",
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "dist": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.bantaypasok.attendance",
+    "productName": "Bantay Pasok",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/serialport/**",
+      "node_modules/@serialport/**"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png",
+      "signAndEditExecutable": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "jencendencia",
+      "repo": "bantay-pasok",
+      "releaseType": "release"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "Bantay Pasok",
+      "artifactName": "BantayPasok.Setup.${version}.${ext}"
+    }
+  },
+  "dependencies": {
+    "@types/nodemailer": "^8.0.2",
+    "electron-updater": "^6.8.9",
+    "exceljs": "^4.4.0",
+    "mysql2": "^3.24.4",
+    "nodemailer": "^10.0.10",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "serialport": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
