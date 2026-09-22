@@ -68,6 +68,37 @@ export default function Students(): React.ReactElement {
             <option value="all">All sections</option>
             {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
+          {sectionFilter !== 'all' && (
+            <button
+              className="btn primary small"
+              onClick={() => {
+                const sec = data.sections.find(x => x.id === sectionFilter);
+                const studs = data.students
+                  .filter(s => s.sectionId === sectionFilter)
+                  .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
+                if (!studs.length) { window.alert(`No students in ${sec?.name} yet.`); return; }
+                printNodes(studs.map(s => {
+                  const sc = data.sections.find(x => x.id === s.sectionId);
+                  const sub = sc?.grade ? `${sc.grade} • ${sc.name.split(' • ')[1] || sc.name}` : sc?.name || 'Student';
+                  return (
+                    <IdCard
+                      key={s.id}
+                      variant="student"
+                      schoolName={data.settings.schoolName}
+                      subLabel={`School Year ${data.settings.schoolYear}`}
+                      name={`${s.firstName} ${s.lastName}`}
+                      sub={sub}
+                      sex={s.sex}
+                      qr={s.qr}
+                    />
+                  );
+                }));
+              }}
+              title="Print ID cards for every student in the selected section"
+            >
+              🖨 Print section ID cards ({data.students.filter(s => s.sectionId === sectionFilter).length})
+            </button>
+          )}
         </div>
 
         <table className="table">

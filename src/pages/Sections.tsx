@@ -6,23 +6,24 @@ import { fmt12, timeToMin } from '../shared/constants';
 import type { Student } from '../shared/types';
 
 type SortKey = 'alpha' | 'arrival';
+type View = 'stats' | 'section';
 
 function minutesOfDay(ts: number): number {
   const dt = new Date(ts);
   return dt.getHours() * 60 + dt.getMinutes();
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
 export default function Sections(): React.ReactElement {
   const { data, now, refresh } = useData();
   const [sectionId, setSectionId] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>('arrival');
-  const [enrollBatchOpen, setEnrollBatchOpen] = useState(false);
-  const [singleStudentForm, setSingleStudentForm] = useState({
-    lastName: '',
-    firstName: '',
-    sex: 'M' as 'M' | 'F',
-    sectionId: ''
-  });
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<View>('stats');
+  const [manageOpen, setManageOpen] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newGrade, setNewGrade] = useState('');
 
   // NOTE: must stay before any early return (rules of hooks).
   // Attendance by time: arrivals per 15-min bucket (6:30, 6:45, 7:00, 7:15, 7:30, 7:45)
@@ -77,6 +78,42 @@ export default function Sections(): React.ReactElement {
 
   const maxBucket = Math.max(1, ...buckets.map(b => b.count));
 
+  // Per-section schedule (from the class program) for the section detail view.
+  const dow = now.getDay();
+  const todaySlots = data.slots
+    .filter(s => s.sectionId === sec.id && s.days.includes(dow))
+    .sort((a, b) => a.start.localeCompare(b.start));
+  const weekSlots = data.slots
+    .filter(s => s.sectionId === sec.id)
+    .sort((a, b) => a.start.localeCompare(b.start) || a.days[0] - b.days[0]);
+  const teacherName = (id: string): string => {
+    const t = data.teachers.find(x => x.id === id);
+    return t ? `${t.firstName} ${t.lastName}` : 'Unassigned';
+  };
+
+  const switchSection = (id: string): void => {
+    setSectionId(id);
+    setChecked(new Set());   // enrolment tick-boxes belong to the previous section
+    setView('section');
+  };
+
+  const addSection = async (): Promise<void> => {
+    if (!newName.trim()) return;
+    const palette = ['#226756', '#1f85b6', '#d96b27', '#5c4e9e', '#4e5ba6', '#b6893b'];
+    await api.patchData({
+      sections: [...data.sections, {
+        id: `sec_${Date.now().toString(36)}`,
+        name: newName.trim(),
+        grade: newGrade.trim() || newName.trim().split(/\s+/)[0],
+        color: palette[data.sections.length % palette.length]
+      }]
+    });
+    setNewName('');
+    setNewGrade('');
+    setManageOpen(false);
+    void refresh();
+  };
+
   const roster = data.students.filter(s => s.sectionId === sec.id);
   const sorted = [...roster].sort((a, b) => {
     if (sort === 'alpha') return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
@@ -86,6 +123,24 @@ export default function Sections(): React.ReactElement {
   });
   const males = sorted.filter(s => s.sex === 'M');
   const females = sorted.filter(s => s.sex === 'F');
+
+  // Batch enrol: only students NOT in the selected section are shown.
+  const unenrolled = data.students.filter(s => s.sectionId !== sec.id);
+
+  const toggleChecked = (id: string): void => {
+    const n = new Set(checked);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    setChecked(n);
+  };
+
+  const enrolChecked = async (): Promise<void> => {
+    if (checked.size === 0) return;
+    const next = data.students.map(s => (checked.has(s.id) ? { ...s, sectionId: sec.id } : s));
+    await api.patchData({ students: next });
+    setChecked(new Set());
+    void refresh();
+  };
 
   const statusPill = (st: Student): React.ReactElement => {
     const inEv = data.attendance.find(e => e.studentId === st.id && e.date === dateStr && e.kind === 'in');
@@ -131,26 +186,6 @@ export default function Sections(): React.ReactElement {
     </table>
   );
 
-  const handleEnrollSingle = async () => {
-    if (!singleStudentForm.lastName || !singleStudentForm.firstName) return;
-    const targetSec = singleStudentForm.sectionId || sec.id;
-    const sId = `s_${Date.now().toString(36)}`;
-    const newStudent: Student = {
-      id: sId,
-      qr: `S-2026-${String(data.students.length + 420).padStart(5, '0')}`,
-      lastName: singleStudentForm.lastName,
-      firstName: singleStudentForm.firstName,
-      middleName: '',
-      sex: singleStudentForm.sex,
-      number: '',
-      sectionId: targetSec,
-      guardianId: null
-    };
-    await api.patchData({ students: [...data.students, newStudent] });
-    setSingleStudentForm({ lastName: '', firstName: '', sex: 'M', sectionId: targetSec });
-    void refresh();
-  };
-
   const exportRosterCsv = () => {
     const rows = [
       ['Section', sec.name],
@@ -192,77 +227,137 @@ export default function Sections(): React.ReactElement {
         </div>
       </div>
 
+      {/* Section switcher: jump straight into a section's students, schedule and attendance */}
+      <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span className="toolbar-label" style={{ marginRight: 2 }}>Section</span>
+          {data.sections.map(s => (
+            <button
+              key={s.id}
+              className={`btn small ${s.id === sec.id && view === 'section' ? 'primary' : 'ghost'}`}
+              onClick={() => switchSection(s.id)}
+            >
+              {s.name}
+              <span style={{ opacity: 0.65, fontWeight: 500 }}> · {data.students.filter(x => x.sectionId === s.id).length}</span>
+            </button>
+          ))}
+          <div className="spacer" />
+          <button
+            className={`btn small ${view === 'stats' ? 'primary' : 'ghost'}`}
+            onClick={() => setView('stats')}
+          >
+            ▤ All sections
+          </button>
+          <button className="btn ghost small" title="Add or rename sections" onClick={() => setManageOpen(true)}>
+            ⚙
+          </button>
+        </div>
+      </div>
+
+      {view === 'section' && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div>
+              <h3 style={{ margin: 0 }}>{sec.name}</h3>
+              <span style={{ color: 'var(--muted)', fontSize: 13 }}>
+                {sec.grade} · {roster.length} students · {males.length} male / {females.length} female
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+              <div><div style={{ fontSize: 22, fontWeight: 800 }}>{bySection.find(r => r.section.id === sec.id)?.present ?? 0}</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>present today</div></div>
+              <div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--orange)' }}>{bySection.find(r => r.section.id === sec.id)?.late ?? 0}</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>late</div></div>
+              <div><div style={{ fontSize: 22, fontWeight: 800, color: 'var(--red)' }}>{bySection.find(r => r.section.id === sec.id)?.absent ?? 0}</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>absent</div></div>
+              <div><div style={{ fontSize: 22, fontWeight: 800 }}>{bySection.find(r => r.section.id === sec.id)?.rate ?? 0}%</div><div style={{ fontSize: 12, color: 'var(--muted)' }}>attendance rate</div></div>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid var(--line)', marginTop: 14, paddingTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+              Today's schedule ({DAY_NAMES[dow]})
+            </div>
+            {todaySlots.length === 0 && <span className="card-note">No classes scheduled for this section today.</span>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {todaySlots.map(sl => {
+                const teacher = data.teachers.find(t => t.id === sl.teacherId);
+                const scanned = teacher && data.scans.some(sc => sc.personId === teacher.id && new Date(sc.ts).toDateString() === now.toDateString());
+                const st = data.slotStatuses.find(x => x.id === `${sl.id}|${dateStr}`);
+                return (
+                  <div
+                    key={sl.id}
+                    style={{
+                      border: '1px solid var(--line)', borderRadius: 10, padding: '8px 12px', minWidth: 170,
+                      background: st?.reason ? 'var(--red-soft)' : scanned ? 'var(--yellow-soft)' : 'var(--card)'
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{fmt12(sl.start)} – {fmt12(sl.end)}</div>
+                    <div style={{ fontSize: 13.5 }}>{sl.subject}</div>
+                    <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                      {teacherName(sl.teacherId)}
+                      {st?.reason ? ' · ' + st.reason.replace('_', ' ') : scanned ? ' · ✓ in' : ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {weekSlots.length > 0 && (
+              <div className="card-note" style={{ marginTop: 8 }}>
+                {weekSlots.length} periods in the weekly class program · {new Set(weekSlots.map(s => s.teacherId)).size} different teachers
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Top Grid: Enrol Card & Attendance Statistics (09_admin_sections_tab.png) */}
-      <div className="grid-1-2">
+      <div className="grid-1-2" style={view === 'section' ? { display: 'block' } : undefined}>
         {/* Left column */}
         <div className="stack">
-          {/* Enrol a student form card */}
+          {/* Batch enrol card: only shows students not yet in the selected section */}
           <div className="card">
-            <h3>Enrol a student</h3>
-            <div className="field">
-              <label>Section</label>
-              <select
-                value={singleStudentForm.sectionId || sec.id}
-                onChange={e => setSingleStudentForm({ ...singleStudentForm, sectionId: e.target.value })}
-              >
-                {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+            <h3>Enrol students</h3>
+            <div className="card-note" style={{ marginTop: -4 }}>
+              Tick students to enrol them into <b>{sec.name}</b> — only students not yet in this section are listed. New students are added on the Students tab.
             </div>
-
-            <div className="field">
-              <label>Sex</label>
-              <div className="segmented">
-                <button
-                  className={singleStudentForm.sex === 'M' ? 'active' : ''}
-                  onClick={() => setSingleStudentForm({ ...singleStudentForm, sex: 'M' })}
-                >
-                  Male
-                </button>
-                <button
-                  className={singleStudentForm.sex === 'F' ? 'active' : ''}
-                  onClick={() => setSingleStudentForm({ ...singleStudentForm, sex: 'F' })}
-                >
-                  Female
-                </button>
-              </div>
-            </div>
-
-            <div className="form-row">
-              <div className="field">
-                <label>Last name</label>
-                <input
-                  value={singleStudentForm.lastName}
-                  placeholder="Tolentino"
-                  onChange={e => setSingleStudentForm({ ...singleStudentForm, lastName: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label>First name and M.I.</label>
-                <input
-                  value={singleStudentForm.firstName}
-                  placeholder="Jerome A."
-                  onChange={e => setSingleStudentForm({ ...singleStudentForm, firstName: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0 4px' }}>
+              <span style={{ fontSize: 13, color: 'var(--muted)' }}>
+                {unenrolled.length} not enrolled here
+              </span>
               <button
-                className="btn yellow"
-                style={{ flex: 1 }}
-                disabled={!singleStudentForm.lastName || !singleStudentForm.firstName}
-                onClick={() => void handleEnrollSingle()}
+                className="btn ghost small"
+                onClick={() => setChecked(checked.size === unenrolled.length ? new Set() : new Set(unenrolled.map(s => s.id)))}
+                disabled={unenrolled.length === 0}
               >
-                ＋ Enrol and create QR
-              </button>
-              <button
-                className="btn ghost"
-                title="Enrol existing students in batch"
-                onClick={() => setEnrollBatchOpen(true)}
-              >
-                ☑ Batch
+                {checked.size === unenrolled.length && unenrolled.length > 0 ? 'Deselect all' : 'Select all'}
               </button>
             </div>
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 10, padding: '4px 10px' }}>
+              {unenrolled.map(st => (
+                <label key={st.id} className="check-row" style={{ cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={checked.has(st.id)}
+                    onChange={() => toggleChecked(st.id)}
+                  />
+                  <span style={{ flex: 1, fontWeight: 600 }}>
+                    {st.lastName}, {st.firstName}{' '}
+                    <Pill color={st.sex === 'M' ? 'blue' : 'purple'}>{st.sex === 'M' ? 'Male' : 'Female'}</Pill>
+                  </span>
+                  <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>
+                    {st.sectionId ? data.sections.find(s => s.id === st.sectionId)?.name : 'Unassigned'}
+                  </span>
+                </label>
+              ))}
+              {unenrolled.length === 0 && (
+                <div className="empty">All students are already enrolled in this section!</div>
+              )}
+            </div>
+            <button
+              className="btn yellow"
+              style={{ width: '100%', marginTop: 12 }}
+              disabled={checked.size === 0}
+              onClick={() => void enrolChecked()}
+            >
+              Enrol {checked.size ? `${checked.size} student${checked.size > 1 ? 's' : ''}` : ''} to {sec.name}
+            </button>
           </div>
 
           {/* Arrival cutoffs card */}
@@ -317,8 +412,8 @@ export default function Sections(): React.ReactElement {
                   <tr
                     key={r.section.id}
                     className="clickable"
-                    style={r.section.id === sec.id ? { background: 'var(--green-50)' } : undefined}
-                    onClick={() => setSectionId(r.section.id)}
+                    style={r.section.id === sec.id && view === 'section' ? { background: 'var(--green-50)' } : undefined}
+                    onClick={() => switchSection(r.section.id)}
                   >
                     <td><b>{r.section.name}</b></td>
                     <td className="num">{r.enrolled}</td>
@@ -386,9 +481,6 @@ export default function Sections(): React.ReactElement {
           <button className="btn ghost small" onClick={exportRosterCsv}>
             ⬇ Excel
           </button>
-          <button className="btn primary small" onClick={() => setEnrollBatchOpen(true)}>
-            ☑ Enrol students
-          </button>
         </div>
 
         <div className="roster-cols">
@@ -403,116 +495,23 @@ export default function Sections(): React.ReactElement {
         </div>
       </div>
 
-      {/* Batch Enrol Students Modal */}
-      {enrollBatchOpen && (
-        <EnrollBatchModal
-          sectionId={sec.id}
-          onClose={() => setEnrollBatchOpen(false)}
-        />
+      {manageOpen && (
+        <Modal title="Add a section" sub="New sections appear in the switcher above and in the class program." onClose={() => setManageOpen(false)} width={420}>
+          <div className="field">
+            <label>Section name (e.g. "G7 • Ilang-Ilang")</label>
+            <input value={newName} placeholder="G7 • Ilang-Ilang" onChange={e => setNewName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Grade level</label>
+            <input value={newGrade} placeholder="Grade 7" onChange={e => setNewGrade(e.target.value)} />
+          </div>
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setManageOpen(false)}>Cancel</button>
+            <button className="btn primary" disabled={!newName.trim()} onClick={() => void addSection()}>Add section</button>
+          </div>
+        </Modal>
       )}
+
     </div>
-  );
-}
-
-function EnrollBatchModal({
-  sectionId,
-  onClose
-}: {
-  sectionId: string;
-  onClose: () => void;
-}): React.ReactElement {
-  const { data, refresh } = useData();
-  const [target, setTarget] = useState(sectionId);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-
-  if (!data) return <div />;
-
-  // Students not currently in this section
-  const unenrolled = data.students.filter(s => s.sectionId !== target);
-
-  const toggleAll = () => {
-    if (checked.size === unenrolled.length) {
-      setChecked(new Set());
-    } else {
-      setChecked(new Set(unenrolled.map(s => s.id)));
-    }
-  };
-
-  const toggle = (id: string) => {
-    const n = new Set(checked);
-    if (n.has(id)) n.delete(id);
-    else n.add(id);
-    setChecked(n);
-  };
-
-  const targetSec = data.sections.find(s => s.id === target);
-
-  return (
-    <Modal
-      title="Enrol students"
-      sub="Tick students to enrol them into the selected section."
-      onClose={onClose}
-      width={640}
-    >
-      <div className="field">
-        <label>Select Target Section</label>
-        <select
-          value={target}
-          onChange={e => {
-            setTarget(e.target.value);
-            setChecked(new Set());
-          }}
-        >
-          {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '8px 0' }}>
-        <span style={{ fontSize: 13, color: 'var(--muted)' }}>
-          {unenrolled.length} students not yet enrolled in {targetSec?.name}
-        </span>
-        <button className="btn ghost small" onClick={toggleAll}>
-          {checked.size === unenrolled.length && unenrolled.length > 0 ? 'Deselect all' : 'Select all'}
-        </button>
-      </div>
-
-      <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 10, padding: '4px 10px' }}>
-        {unenrolled.map(st => (
-          <label key={st.id} className="check-row" style={{ cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={checked.has(st.id)}
-              onChange={() => toggle(st.id)}
-            />
-            <span style={{ flex: 1, fontWeight: 600 }}>
-              {st.lastName}, {st.firstName}{' '}
-              <Pill color={st.sex === 'M' ? 'blue' : 'purple'}>{st.sex === 'M' ? 'Male' : 'Female'}</Pill>
-            </span>
-            <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-              {st.sectionId ? data.sections.find(s => s.id === st.sectionId)?.name : 'Unassigned'}
-            </span>
-          </label>
-        ))}
-        {unenrolled.length === 0 && (
-          <div className="empty">All students are already enrolled in this section!</div>
-        )}
-      </div>
-
-      <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button
-          className="btn primary"
-          disabled={checked.size === 0}
-          onClick={async () => {
-            const next = data.students.map(s => (checked.has(s.id) ? { ...s, sectionId: target } : s));
-            await api.patchData({ students: next });
-            void refresh();
-            onClose();
-          }}
-        >
-          Enrol {checked.size ? `${checked.size} student${checked.size > 1 ? 's' : ''}` : ''} to {targetSec?.name}
-        </button>
-      </div>
-    </Modal>
   );
 }
