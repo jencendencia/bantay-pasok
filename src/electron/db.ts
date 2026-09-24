@@ -1,32 +1,29 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as mysql from 'mysql2/promise';
-import type { Pool } from 'mysql2/promise';
+import type { Database as SqliteDatabase } from 'better-sqlite3';
 import { DEFAULT_SETTINGS } from '../shared/constants';
 import type { AppData } from '../shared/types';
 
 export interface DbConfig {
   enabled: boolean;
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  database: string;
+  /** Absolute path of the .db file. Empty string means "use the default location". */
+  file: string;
 }
 
-/** Row collections mirrored as tables. */
-const COLLECTIONS = [
+// Collections mirrored row-by-row (table name === collection name unless mapped below).
+export const COLLECTIONS = [
   'users', 'sections', 'departments', 'teachers', 'guardians', 'students',
-  'slots', 'slotStatuses', 'scans', 'attendance', 'classEvents', 'sms',
-  'emails', 'announcements'
+  'slots', 'slotStatuses', 'scans', 'attendance', 'classEvents',
+  'sms', 'emails', 'announcements'
 ] as const;
 
-/** Object-valued parts of AppData stored in the kv table. */
-const KV_KEYS = ['settings', 'holiday', 'borrowed'] as const;
+// Singleton documents stored in the kv table as JSON blobs.
+export const KV_KEYS = ['settings', 'holiday', 'borrowed'] as const;
 
+// Columns stored as JSON text; parsed back into objects/arrays on read.
 const JSON_COLUMNS = new Set(['days', 'terms', 'holidayDates']);
 
-/** Per-row sync identity inside each table. */
+// Collections whose rows carry a derived unique key column instead of plain id.
 const KEY_COLUMNS: Record<string, string> = {
   slotStatuses: 'slot_status_key',
   attendance: 'attendance_key',
@@ -36,232 +33,271 @@ const KEY_COLUMNS: Record<string, string> = {
   scans: 'id'
 };
 
-function defaultConfig(): DbConfig {
-  return { enabled: false, host: '127.0.0.1', port: 3306, user: 'root', password: '', database: 'bantay_pasok' };
+// Columns added after the first release; added to existing databases on connect.
+const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  { table: 'announcements', column: 'video_data', ddl: 'TEXT' },
+  { table: 'students', column: 'photo_data', ddl: 'TEXT' },
+  { table: 'teachers', column: 'photo_data', ddl: 'TEXT' }
+];
+
+function defaultConfig(userDataDir: string): DbConfig {
+  return { enabled: true, file: path.join(userDataDir, 'bantay-pasok.db') };
 }
 
 function configPath(userDataDir: string): string {
-  return path.join(userDataDir, 'mysql.json');
+  return path.join(userDataDir, 'sqlite.json');
 }
 
 export function loadDbConfig(userDataDir: string): DbConfig {
+  const fallback = defaultConfig(userDataDir);
   try {
     const raw = fs.readFileSync(configPath(userDataDir), 'utf-8');
-    return { ...defaultConfig(), ...JSON.parse(raw) } as DbConfig;
-  } catch { return defaultConfig(); }
+    const parsed = JSON.parse(raw) as Partial<DbConfig>;
+    const cfg: DbConfig = {
+      enabled: parsed.enabled !== false,
+      file: typeof parsed.file === 'string' && parsed.file.trim() ? parsed.file : fallback.file
+    };
+    // Relative paths are resolved against the data directory.
+    if (!path.isAbsolute(cfg.file)) cfg.file = path.join(userDataDir, cfg.file);
+    return cfg;
+  } catch {
+    return fallback;
+  }
 }
 
 export function saveDbConfig(userDataDir: string, cfg: DbConfig): void {
   fs.mkdirSync(userDataDir, { recursive: true });
-  fs.writeFileSync(configPath(userDataDir), JSON.stringify(cfg, null, 2));
+  fs.writeFileSync(configPath(userDataDir), JSON.stringify(cfg, null, 2), 'utf-8');
 }
 
-function rowKey(collection: string, row: Record<string, unknown>): string {
-  switch (collection) {
-    case 'attendance': return `${row.studentId}|${row.date}|${row.kind}`;
-    case 'classEvents': return `${row.slotId}|${row.date}`;
-    default: return String(row.id);
+// better-sqlite3 is loaded lazily (see file comment).
+type SqliteCtor = new (file: string) => SqliteDatabase;
+let sqliteCtor: SqliteCtor | null = null;
+function getSqlite(): SqliteCtor {
+  if (!sqliteCtor) {
+    const mod = require('better-sqlite3') as SqliteCtor | { default: SqliteCtor };
+    sqliteCtor = ((mod as { default?: SqliteCtor }).default ?? mod) as SqliteCtor;
+  }
+  return sqliteCtor;
+}
+
+function openDatabase(file: string): SqliteDatabase {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new (getSqlite())(file);
+  db.pragma('journal_mode = WAL');
+  return db;
+}
+
+function columnExists(db: SqliteDatabase, table: string, column: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name: string }>;
+  return rows.some(r => r.name === column);
+}
+
+const TABLE_DDL: Record<string, string> = {
+  users: '"id" TEXT PRIMARY KEY, "username" TEXT, "password_hash" TEXT, "role" TEXT, "display_name" TEXT',
+  sections: '"id" TEXT PRIMARY KEY, "name" TEXT, "grade" TEXT, "color" TEXT',
+  departments: '"id" TEXT PRIMARY KEY, "name" TEXT',
+  teachers: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "department_id" TEXT, "number" TEXT',
+  guardians: '"id" TEXT PRIMARY KEY, "last_name" TEXT, "first_name" TEXT, "number" TEXT, "address" TEXT, "email" TEXT',
+  students: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "sex" TEXT, "number" TEXT, "section_id" TEXT, "guardian_id" TEXT, "photo_data" TEXT',
+  slots: '"id" TEXT PRIMARY KEY, "section_id" TEXT, "subject" TEXT, "department_id" TEXT, "teacher_id" TEXT, "start" TEXT, "end" TEXT, "days" TEXT',
+  slot_statuses: '"id" TEXT PRIMARY KEY, "slot_status_key" TEXT UNIQUE, "slot_id" TEXT, "reason" TEXT, "note" TEXT, "date" TEXT',
+  scans: '"id" TEXT PRIMARY KEY, "person_id" TEXT, "role" TEXT, "ts" INTEGER, "kind" TEXT',
+  attendance: '"id" TEXT PRIMARY KEY, "attendance_key" TEXT UNIQUE, "student_id" TEXT, "date" TEXT, "ts" INTEGER, "kind" TEXT',
+  class_events: '"id" TEXT PRIMARY KEY, "class_event_key" TEXT UNIQUE, "slot_id" TEXT, "teacher_id" TEXT, "date" TEXT, "ts" INTEGER',
+  sms: '"id" TEXT PRIMARY KEY, "ts" INTEGER, "to" TEXT, "body" TEXT, "student_id" TEXT, "kind" TEXT, "status" TEXT, "attempts" INTEGER, "last_error" TEXT, "sent_ts" INTEGER, "next_retry_ts" INTEGER',
+  emails: '"id" TEXT PRIMARY KEY, "ts" INTEGER, "to" TEXT, "subject" TEXT, "body" TEXT, "student_id" TEXT, "kind" TEXT, "status" TEXT, "attempts" INTEGER, "last_error" TEXT, "sent_ts" INTEGER, "next_retry_ts" INTEGER',
+  announcements: '"id" TEXT PRIMARY KEY, "type" TEXT, "title" TEXT, "body" TEXT, "photo_path" TEXT, "photo_data" TEXT, "video_data" TEXT, "from" TEXT, "to" TEXT, "enabled" INTEGER, "posted_by" TEXT',
+  kv: '"key" TEXT PRIMARY KEY, "value" TEXT'
+};
+
+// Table names use snake_case; the in-memory collections use camelCase.
+const TABLE_OF: Record<string, string> = {
+  slotStatuses: 'slot_statuses',
+  classEvents: 'class_events'
+};
+
+function tableFor(collection: string): string {
+  return TABLE_OF[collection] ?? collection;
+}
+
+export function ensureSchema(cfg: DbConfig): void {
+  const db = openDatabase(cfg.file);
+  try {
+    for (const [table, ddl] of Object.entries(TABLE_DDL)) {
+      db.prepare(`CREATE TABLE IF NOT EXISTS "${table}" (${ddl})`).run();
+    }
+    for (const m of COLUMN_MIGRATIONS) {
+      if (!columnExists(db, m.table, m.column)) {
+        db.prepare(`ALTER TABLE "${m.table}" ADD COLUMN "${m.column}" ${m.ddl}`).run();
+      }
+    }
+  } finally {
+    db.close();
   }
 }
 
+// ---------- row mapping ----------
+
+function rowKey(collection: string, row: Record<string, unknown>): string {
+  if (collection === 'attendance') return `${row.studentId}|${row.date}|${row.kind}`;
+  if (collection === 'classEvents') return `${row.slotId}|${row.date}`;
+  return String(row.id);
+}
+
 function snake(k: string): string {
-  return k.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+  return k.replace(/[A-Z]/g, c => `_${c.toLowerCase()}`);
 }
 
 function camel(k: string): string {
-  return k.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  return k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
 }
 
 export function rowToDb(collection: string, row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(row)) {
-    out[snake(k)] = (JSON_COLUMNS.has(k) && v !== undefined) ? JSON.stringify(v) : v;
+    if (JSON_COLUMNS.has(k)) {
+      out[snake(k)] = JSON.stringify(v ?? null);
+    } else if (typeof v === 'boolean') {
+      out[snake(k)] = v ? 1 : 0; // SQLite has no boolean; store as 0/1.
+    } else {
+      out[snake(k)] = v;
+    }
   }
   const keyCol = KEY_COLUMNS[collection];
-  if (keyCol && keyCol !== 'id' && !out[keyCol]) {
-    out[keyCol] = rowKey(collection, row);
-  }
+  if (keyCol && out[keyCol] === undefined) out[keyCol] = rowKey(collection, row);
   return out;
 }
 
 export function rowFromDb(collection: string, row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(row)) out[camel(k)] = v;
+  for (const [k, v] of Object.entries(row)) {
+    const key = camel(k);
+    if (JSON_COLUMNS.has(key) && typeof v === 'string') {
+      try { out[key] = JSON.parse(v); continue; } catch { /* fall through to raw value */ }
+    }
+    out[key] = v;
+  }
   const keyCol = KEY_COLUMNS[collection];
   if (keyCol && keyCol !== 'id') delete out[keyCol];
   return out;
 }
 
-/** Adds columns that were introduced after the first schema release (existing installs). */
-const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
-  { table: 'announcements', column: 'video_data', ddl: 'LONGTEXT NULL' },
-];
-
-/** Creates the database and all tables if they do not exist yet. */
-export async function ensureSchema(cfg: DbConfig): Promise<void> {
-  const server = await mysql.createConnection({
-    host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, connectTimeout: 5000
-  });
-  try {
-    await server.query(
-      `CREATE DATABASE IF NOT EXISTS \`${cfg.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
-    );
-  } finally {
-    await server.end();
-  }
-
-  const pool = await mysql.createPool({
-    host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password,
-    database: cfg.database, connectionLimit: 5, connectTimeout: 5000
-  });
-  try {
-    const defs: Record<string, string> = {
-      users: '`id` VARCHAR(64) PRIMARY KEY, `username` VARCHAR(64), `password_hash` VARCHAR(128), `role` VARCHAR(16), `display_name` VARCHAR(128)',
-      sections: '`id` VARCHAR(64) PRIMARY KEY, `name` VARCHAR(128), `grade` VARCHAR(64), `color` VARCHAR(16)',
-      departments: '`id` VARCHAR(64) PRIMARY KEY, `name` VARCHAR(128)',
-      teachers: '`id` VARCHAR(64) PRIMARY KEY, `qr` VARCHAR(64), `last_name` VARCHAR(128), `first_name` VARCHAR(128), `middle_name` VARCHAR(64), `department_id` VARCHAR(64), `number` VARCHAR(32)',
-      guardians: '`id` VARCHAR(64) PRIMARY KEY, `last_name` VARCHAR(128), `first_name` VARCHAR(128), `number` VARCHAR(32), `address` VARCHAR(255), `email` VARCHAR(190)',
-      students: '`id` VARCHAR(64) PRIMARY KEY, `qr` VARCHAR(64), `last_name` VARCHAR(128), `first_name` VARCHAR(128), `middle_name` VARCHAR(64), `sex` VARCHAR(2), `number` VARCHAR(32), `section_id` VARCHAR(64), `guardian_id` VARCHAR(64)',
-      slots: '`id` VARCHAR(64) PRIMARY KEY, `section_id` VARCHAR(64), `subject` VARCHAR(128), `department_id` VARCHAR(64), `teacher_id` VARCHAR(64), `start` VARCHAR(8), `end` VARCHAR(8), `days` JSON',
-      slotStatuses: '`id` VARCHAR(64) PRIMARY KEY, `slot_status_key` VARCHAR(160) UNIQUE, `slot_id` VARCHAR(64), `reason` VARCHAR(24), `note` VARCHAR(512), `date` VARCHAR(10)',
-      scans: '`id` VARCHAR(64) PRIMARY KEY, `person_id` VARCHAR(64), `role` VARCHAR(16), `ts` BIGINT, `kind` VARCHAR(8)',
-      attendance: '`id` VARCHAR(64) PRIMARY KEY, `attendance_key` VARCHAR(128) UNIQUE, `student_id` VARCHAR(64), `date` VARCHAR(10), `ts` BIGINT, `kind` VARCHAR(8)',
-      classEvents: '`id` VARCHAR(64) PRIMARY KEY, `class_event_key` VARCHAR(160) UNIQUE, `slot_id` VARCHAR(64), `teacher_id` VARCHAR(64), `date` VARCHAR(10), `ts` BIGINT',
-      sms: '`id` VARCHAR(64) PRIMARY KEY, `ts` BIGINT, `to` VARCHAR(32), `body` VARCHAR(512), `student_id` VARCHAR(64), `kind` VARCHAR(16), `status` VARCHAR(16), `attempts` INT, `last_error` VARCHAR(512), `sent_ts` BIGINT, `next_retry_ts` BIGINT',
-      emails: '`id` VARCHAR(64) PRIMARY KEY, `ts` BIGINT, `to` VARCHAR(190), `subject` VARCHAR(255), `body` TEXT, `student_id` VARCHAR(64), `kind` VARCHAR(16), `status` VARCHAR(16), `attempts` INT, `last_error` VARCHAR(512), `sent_ts` BIGINT, `next_retry_ts` BIGINT',
-      announcements: '`id` VARCHAR(64) PRIMARY KEY, `type` VARCHAR(8), `title` VARCHAR(190), `body` TEXT, `photo_path` VARCHAR(512), `photo_data` LONGTEXT, `video_data` LONGTEXT, `from` VARCHAR(10), `to` VARCHAR(10), `enabled` TINYINT(1), `posted_by` VARCHAR(128)',
-      kv: '`key` VARCHAR(64) PRIMARY KEY, `value` JSON'
-    };
-    for (const [table, ddl] of Object.entries(defs)) {
-      await pool.query(`CREATE TABLE IF NOT EXISTS \`${table}\` (${ddl}) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-    }
-    for (const m of COLUMN_MIGRATIONS) {
-      try {
-        await pool.query(`ALTER TABLE \`${m.table}\` ADD COLUMN \`${m.column}\` ${m.ddl}`);
-      } catch (err) {
-        const e = err as { errno?: number; code?: string };
-        if (e.errno !== 1060 && e.code !== 'ER_DUP_FIELDNAME') throw err; // 1060 = column already exists
-      }
-    }
-  } finally {
-    await pool.end();
-  }
-}
+// ---------- connection ----------
 
 export class DbConnection {
-  private pool: Pool | null = null;
+  private db: SqliteDatabase | null = null;
   lastError: string | null = null;
 
   get enabled(): boolean {
-    return this.pool !== null;
+    return this.db !== null;
   }
 
-  async connect(cfg: DbConfig): Promise<void> {
-    await this.disconnect();
-    this.pool = await mysql.createPool({
-      host: cfg.host,
-      port: cfg.port,
-      user: cfg.user,
-      password: cfg.password,
-      database: cfg.database,
-      connectionLimit: 5,
-      connectTimeout: 5000
-    });
-    await this.pool.query('SELECT 1');
+  connect(cfg: DbConfig): void {
+    this.disconnect();
+    this.db = openDatabase(cfg.file);
+    this.db.prepare('SELECT 1').get(); // sanity check the handle
   }
 
-  async disconnect(): Promise<void> {
-    if (this.pool) {
-      try { await this.pool.end(); } catch { /* ignore */ }
-      this.pool = null;
+  disconnect(): void {
+    if (this.db) {
+      try { this.db.close(); } catch { /* already closed */ }
+      this.db = null;
     }
   }
 
-  /** Verifies connectivity; returns the server version. Throws on failure. */
-  async test(cfg: DbConfig): Promise<string> {
-    const conn = await mysql.createConnection({
-      host: cfg.host, port: cfg.port, user: cfg.user, password: cfg.password, connectTimeout: 5000
-    });
+  /** Opens the file independently and returns the SQLite version. */
+  test(cfg: DbConfig): string {
+    const probe = openDatabase(cfg.file);
     try {
-      const [rows] = await conn.query('SELECT VERSION() AS v');
-      return (rows as { v: string }[])[0]?.v ?? 'unknown';
+      const row = probe.prepare('SELECT sqlite_version() AS v').get() as { v: string };
+      return row.v;
     } finally {
-      await conn.end();
+      probe.close();
     }
   }
 
-  /** Reads everything into an AppData shape (settings backfilled if missing). */
-  async loadAll(): Promise<AppData> {
-    if (!this.pool) throw new Error('MySQL not connected');
-    const d = { settings: { ...DEFAULT_SETTINGS }, holiday: { date: null }, borrowed: { sections: [] } } as unknown as AppData;
+  loadAll(): AppData {
+    if (!this.db) throw new Error('SQLite database is not connected');
+    const db = this.db;
+    const d = {
+      settings: { ...DEFAULT_SETTINGS },
+      holiday: { date: null },
+      borrowed: { sections: [] }
+    } as unknown as Record<string, unknown>;
     for (const c of COLLECTIONS) {
-      const [result] = await this.pool.query(`SELECT * FROM \`${c}\``);
-      (d as unknown as Record<string, unknown>)[c] =
-        (result as Record<string, unknown>[]).map(r => rowFromDb(c, r));
+      const rows = db.prepare(`SELECT * FROM "${tableFor(c)}"`).all() as Array<Record<string, unknown>>;
+      d[c] = rows.map(r => rowFromDb(c, r));
     }
-    const [kvRows] = await this.pool.query('SELECT `key`, `value` FROM `kv`');
-    for (const r of kvRows as { key: string; value: unknown }[]) {
-      const parsed = typeof r.value === 'string' ? JSON.parse(r.value) : r.value;
-      if (r.key === 'settings') d.settings = { ...DEFAULT_SETTINGS, ...parsed };
-      else if (r.key === 'holiday') d.holiday = parsed;
-      else if (r.key === 'borrowed') d.borrowed = parsed;
+    const kvRows = db.prepare('SELECT "key", "value" FROM "kv"').all() as Array<{ key: string; value: unknown }>;
+    for (const row of kvRows) {
+      if (!KV_KEYS.includes(row.key as never)) continue;
+      let value: unknown = row.value;
+      if (typeof value === 'string') {
+        try { value = JSON.parse(value); } catch { /* keep raw */ }
+      }
+      if (row.key === 'settings' && value && typeof value === 'object') {
+        d.settings = { ...DEFAULT_SETTINGS, ...(value as object) };
+      } else {
+        d[row.key] = value;
+      }
     }
     if (!Array.isArray(d.emails)) d.emails = [];
-    return d;
+    return d as unknown as AppData;
   }
 
-  /**
-   * Syncs an AppData snapshot into MySQL: inserts new rows, updates changed
-   * ones, deletes rows that disappeared (by primary key), and upserts the
-   * settings/holiday/borrowed JSON blobs.
-   */
-  async sync(d: AppData): Promise<void> {
-    if (!this.pool) throw new Error('MySQL not connected');
+  /** Mirrors the whole snapshot into SQLite inside one transaction. */
+  sync(d: AppData): void {
+    if (!this.db) throw new Error('SQLite database is not connected');
+    const db = this.db;
     const src = d as unknown as Record<string, unknown>;
 
-    for (const c of COLLECTIONS) {
-      const keyCol = KEY_COLUMNS[c] ?? 'id';
-      const rows = Array.isArray(src[c]) ? (src[c] as Record<string, unknown>[]) : [];
-      const target = rows.map(r => rowToDb(c, r));
-      const targetKeys = new Set(target.map(r => String(r[keyCol])));
+    const run = db.transaction((): void => {
+      for (const c of COLLECTIONS) {
+        const table = tableFor(c);
+        const keyCol = KEY_COLUMNS[c] ?? 'id';
+        const rows = (Array.isArray(src[c]) ? src[c] : []) as Array<Record<string, unknown>>;
+        const target = rows.map(r => rowToDb(c, r));
+        const targetKeys = new Set(target.map(r => String(r[keyCol])));
 
-      const [existing] = await this.pool.query(`SELECT \`${keyCol}\` FROM \`${c}\``);
-      const existingKeys = new Set((existing as Record<string, unknown>[]).map(r => String(r[keyCol])));
+        const existingRows = db.prepare(`SELECT "${keyCol}" AS k FROM "${table}"`).all() as Array<{ k: unknown }>;
+        const existingKeys = new Set(existingRows.map(r => String(r.k)));
 
-      for (const k of [...existingKeys].filter(k => !targetKeys.has(k))) {
-        await this.pool.query(`DELETE FROM \`${c}\` WHERE \`${keyCol}\` = ?`, [k]);
-      }
+        const delStmt = db.prepare(`DELETE FROM "${table}" WHERE "${keyCol}" = ?`);
+        for (const k of existingKeys) {
+          if (!targetKeys.has(k)) delStmt.run(k);
+        }
 
-      for (const row of target) {
-        const key = String(row[keyCol]);
-        const cols = Object.keys(row).filter(k => row[k] !== undefined);
-        if (cols.length === 0) continue;
-        if (!existingKeys.has(key)) {
-          const names = cols.map(k => `\`${k}\``).join(', ');
-          const placeholders = cols.map(() => '?').join(', ');
-          await this.pool.query(
-            `INSERT INTO \`${c}\` (${names}) VALUES (${placeholders})`,
-            cols.map(k => row[k] ?? null)
-          );
-        } else {
-          const updatable = cols.filter(k => k !== keyCol);
-          if (updatable.length === 0) continue;
-          const assignments = updatable.map(k => `\`${k}\` = ?`).join(', ');
-          await this.pool.query(
-            `UPDATE \`${c}\` SET ${assignments} WHERE \`${keyCol}\` = ?`,
-            [...updatable.map(k => row[k] ?? null), key]
-          );
+        for (const row of target) {
+          const key = String(row[keyCol]);
+          // Keep keys whose value is explicitly undefined: binding ??.null clears
+          // the column (e.g. a removed photo) instead of leaving a stale value.
+          const cols = Object.keys(row);
+          if (cols.length === 0) continue;
+          if (!existingKeys.has(key)) {
+            const names = cols.map(k => `"${k}"`).join(', ');
+            const marks = cols.map(() => '?').join(', ');
+            db.prepare(`INSERT INTO "${table}" (${names}) VALUES (${marks})`)
+              .run(...cols.map(k => row[k] ?? null));
+          } else {
+            const updatable = cols.filter(k => k !== keyCol);
+            if (updatable.length === 0) continue;
+            const sets = updatable.map(k => `"${k}" = ?`).join(', ');
+            db.prepare(`UPDATE "${table}" SET ${sets} WHERE "${keyCol}" = ?`)
+              .run(...updatable.map(k => row[k] ?? null), key);
+          }
         }
       }
-    }
 
-    // settings / holiday / borrowed as JSON blobs
-    for (const k of KV_KEYS) {
-      if (src[k] === undefined) continue;
-      await this.pool.query(
-        'INSERT INTO `kv` (`key`, `value`) VALUES (?, ?) ON DUPLICATE KEY UPDATE `value` = ?',
-        [k, JSON.stringify(src[k]), JSON.stringify(src[k])]
+      const kvUpsert = db.prepare(
+        'INSERT INTO "kv" ("key", "value") VALUES (?, ?) ' +
+        'ON CONFLICT("key") DO UPDATE SET "value" = excluded."value"'
       );
-    }
+      for (const k of KV_KEYS) {
+        if (src[k] === undefined) continue;
+        kvUpsert.run(k, JSON.stringify(src[k]));
+      }
+    });
+    run();
   }
 }

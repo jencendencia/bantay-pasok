@@ -28,6 +28,7 @@ export interface Teacher {
   middleName: string;
   departmentId: string;
   number?: string;
+  photoData?: string; // data URL (teacher picture on the ID card); optional
 }
 
 export interface Guardian {
@@ -49,6 +50,7 @@ export interface Student {
   number: string;
   sectionId: string | null;
   guardianId: string | null;
+  photoData?: string; // data URL (student picture on the ID card); optional
 }
 
 export interface Slot {

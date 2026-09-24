@@ -32,7 +32,7 @@ export async function initStore(): Promise<void> {
     try {
       await ensureSchema(dbCfg);
       await db.connect(dbCfg);
-      // Prefer whatever is already in MySQL; seed it on first run.
+      // Prefer whatever is already in SQLite; seed it on first run.
       const fromDb = await db.loadAll();
       const dbEmpty = fromDb.users.length === 0 && fromDb.students.length === 0;
       if (dbEmpty) {
@@ -43,7 +43,7 @@ export async function initStore(): Promise<void> {
       }
       return;
     } catch (err) {
-      console.error('MySQL unavailable, falling back to JSON storage:', err);
+      console.error('SQLite unavailable, falling back to JSON storage:', err);
       db.lastError = err instanceof Error ? err.message : String(err);
       await db.disconnect();
     }
@@ -121,7 +121,7 @@ function scheduleSave(): void {
   }, 300);
 }
 
-/** Persists current data: always to JSON (offline fallback), plus MySQL when enabled. */
+/** Persists current data: always to JSON (offline fallback), plus SQLite when enabled. */
 export async function flushSave(): Promise<void> {
   if (saveTimer) {
     clearTimeout(saveTimer);
@@ -134,7 +134,7 @@ export async function flushSave(): Promise<void> {
       await db.sync(data);
     } catch (err) {
       db.lastError = err instanceof Error ? err.message : String(err);
-      console.error('MySQL sync failed:', err);
+      console.error('SQLite sync failed:', err);
     }
   }
 }
@@ -157,16 +157,16 @@ export function patchData(fn: (d: AppData) => void): void {
   saveData();
 }
 
-/** One-time import of the JSON store into MySQL (Settings → Import data.json). */
-export async function importJsonToMysql(): Promise<void> {
-  if (!db.enabled) throw new Error('MySQL is not connected');
+/** One-time import of the JSON store into SQLite (Settings → Import data.json). */
+export async function importJsonToSqlite(): Promise<void> {
+  if (!db.enabled) throw new Error('SQLite is not connected');
   const json = loadJson();
   await db.sync(json);
   const fromDb = await db.loadAll();
   data = fromDb;
 }
 
-/** Applies a new MySQL config at runtime (Settings → Database). */
+/** Applies a new SQLite config at runtime (Settings → Database). */
 export async function applyDbConfig(cfg: DbConfig, testOnly: boolean): Promise<{ ok: boolean; version?: string; error?: string }> {
   if (testOnly) {
     const probe = new DbConnection();
@@ -182,14 +182,14 @@ export async function applyDbConfig(cfg: DbConfig, testOnly: boolean): Promise<{
   dbCfg = cfg;
   saveDbConfig(DATA_DIR, cfg);
   if (!cfg.enabled) {
-    // Turning MySQL off drops the connection immediately; JSON keeps working.
-    disconnectMysql();
+    // Turning SQLite off closes the database immediately; JSON keeps working.
+    disconnectSqlite();
   }
   return { ok: true };
 }
 
 /** Connects using the stored config, seeds from JSON if the DB is empty. */
-export async function connectMysql(): Promise<{ ok: boolean; error?: string }> {
+export async function connectSqlite(): Promise<{ ok: boolean; error?: string }> {
   try {
     await ensureSchema(dbCfg);
     await db.connect(dbCfg);
@@ -210,7 +210,7 @@ export async function connectMysql(): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
-export function disconnectMysql(): void {
+export function disconnectSqlite(): void {
   void db.disconnect();
 }
 

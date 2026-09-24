@@ -6,8 +6,9 @@ import { monogramOf } from '../shared/constants';
 /**
  * The ID card visual shared by the student and teacher modals
  * and by the hidden print root (the only thing that prints).
+ * A student photo (data URL) replaces the cartoon avatar when provided.
  */
-export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr }: {
+export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr, photoData }: {
   variant: 'student' | 'teacher';
   schoolName: string;
   subLabel: string;
@@ -15,6 +16,7 @@ export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr }: {
   sub: string;
   sex: 'M' | 'F';
   qr: string;
+  photoData?: string;
 }): React.ReactElement {
   const monogram = monogramOf(schoolName);
 
@@ -33,9 +35,15 @@ export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr }: {
       </div>
 
       <div className="id-card-body">
-        <div className="id-card-avatar">
-          <AvatarIcon role={variant} sex={sex} size={100} />
-        </div>
+        {photoData ? (
+          <div className="id-card-photo">
+            <img src={photoData} alt={name} />
+          </div>
+        ) : (
+          <div className="id-card-avatar">
+            <AvatarIcon role={variant} sex={sex} size={100} />
+          </div>
+        )}
 
         <div className="id-card-name">{name}</div>
         <div className="id-card-section">{sub}</div>

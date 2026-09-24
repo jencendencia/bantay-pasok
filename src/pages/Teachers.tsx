@@ -19,6 +19,7 @@ export default function Teachers(): React.ReactElement {
   const [secFilter, setSecFilter] = useState('all');
   const [depFilter, setDepFilter] = useState('all');
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Teacher | null>(null);
   const [qrTeacher, setQrTeacher] = useState<Teacher | null>(null);
   const [reasonSlot, setReasonSlot] = useState<{ slot: Slot; status: { reason: string; note: string } | null } | null>(null);
 
@@ -231,9 +232,38 @@ export default function Teachers(): React.ReactElement {
               <div className="qc-name">{t.firstName} {t.lastName}</div>
               <div className="qc-sub">{data.departments.find(d => d.id === t.departmentId)?.name}</div>
               <div style={{ fontSize: 11.5, color: '#6a7d73', marginTop: 2, fontWeight: 700 }}>{t.qr}</div>
+              <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                <button
+                  className="btn ghost small"
+                  style={{ flex: 1 }}
+                  onClick={() => setEditing(t)}
+                  title="Edit teacher info"
+                >
+                  ✎ Edit
+                </button>
+                <button
+                  className="btn ghost small"
+                  style={{ flex: 1, color: 'var(--red)' }}
+                  title="Remove teacher"
+                  onClick={async () => {
+                    const slotCount = data.slots.filter(s => s.teacherId === t.id).length;
+                    const msg = slotCount
+                      ? `Remove ${t.firstName} ${t.lastName}? Their ${slotCount} class slot${slotCount > 1 ? 's' : ''} in the class program will also be removed.`
+                      : `Remove ${t.firstName} ${t.lastName}?`;
+                    if (!window.confirm(msg)) return;
+                    await api.patchData({
+                      teachers: data.teachers.filter(x => x.id !== t.id),
+                      slots: data.slots.filter(s => s.teacherId !== t.id)
+                    });
+                    void refresh();
+                  }}
+                >
+                  🗑 Remove
+                </button>
+              </div>
               <button
                 className="btn ghost small"
-                style={{ marginTop: 8, width: '100%' }}
+                style={{ marginTop: 6, width: '100%' }}
                 onClick={() => setQrTeacher(t)}
               >
                 Print ID Card
@@ -244,6 +274,7 @@ export default function Teachers(): React.ReactElement {
       </div>
 
       {adding && <AddTeacherModal onClose={() => setAdding(false)} />}
+      {editing && <AddTeacherModal existing={editing} onClose={() => setEditing(null)} />}
       {qrTeacher && <PrintTeacherIdModal teacher={qrTeacher} onClose={() => setQrTeacher(null)} />}
 
       {reasonSlot && (
@@ -277,32 +308,96 @@ export function QrImg({ value, size = 120 }: { value: string; size?: number }): 
   );
 }
 
-function AddTeacherModal({ onClose }: { onClose: () => void }): React.ReactElement {
+function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: () => void }): React.ReactElement {
   const { data, refresh } = useData();
   const [form, setForm] = useState({
-    lastName: '',
-    firstName: '',
-    departmentId: data?.departments[0]?.id ?? ''
+    lastName: existing?.lastName ?? '',
+    firstName: existing?.firstName ?? '',
+    departmentId: existing?.departmentId ?? data?.departments[0]?.id ?? ''
   });
+  const [photo, setPhoto] = useState<string | null>(existing?.photoData ?? null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const isEdit = !!existing;
   if (!data) return <div />;
 
+  // Reads the chosen picture and downscales it to max 320px (keeps data.json and SQLite light).
+  const pickPhoto = (file: File | undefined): void => {
+    if (!file) return;
+    setPhotoBusy(true);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 320;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        setPhoto(canvas.toDataURL('image/jpeg', 0.85));
+        setPhotoBusy(false);
+      };
+      img.onerror = () => { setPhoto(null); setPhotoBusy(false); };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
-    <Modal title="Add a teacher" onClose={onClose} width={480}>
-      <div className="form-row">
-        <div className="field">
-          <label>First name</label>
-          <input value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} />
+    <Modal title={isEdit ? `Edit ${existing!.firstName} ${existing!.lastName}` : 'Add a teacher'} onClose={onClose} width={540}>
+      <div className="form-row" style={{ alignItems: 'flex-start' }}>
+        <div className="field" style={{ maxWidth: 150 }}>
+          <label>Teacher picture</label>
+          <div
+            style={{
+              width: 120, height: 120, borderRadius: '50%', border: '3px solid var(--yellow)',
+              overflow: 'hidden', background: 'var(--green-50)', display: 'grid', placeItems: 'center', cursor: 'pointer'
+            }}
+            title="Choose a picture"
+            onClick={() => document.getElementById('teacher-photo-input')?.click()}
+          >
+            {photo
+              ? <img src={photo} alt="Teacher" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              : <AvatarIcon role="teacher" sex="F" size={110} />}
+          </div>
+          <input
+            id="teacher-photo-input"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            style={{ display: 'none' }}
+            onChange={e => { pickPhoto(e.target.files?.[0]); e.target.value = ''; }}
+          />
+          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+            <button type="button" className="btn ghost small" disabled={photoBusy} onClick={() => document.getElementById('teacher-photo-input')?.click()}>
+              {photoBusy ? 'Reading…' : 'Choose file'}
+            </button>
+            {photo && <button type="button" className="btn ghost small" onClick={() => setPhoto(null)}>Remove</button>}
+          </div>
+          <div className="card-note" style={{ fontSize: 11.5 }}>Optional — JPEG/PNG. Shows on the ID card.</div>
         </div>
-        <div className="field">
-          <label>Last name</label>
-          <input value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} />
+        <div style={{ flex: 1 }}>
+          <div className="form-row">
+            <div className="field">
+              <label>First name</label>
+              <input value={form.firstName} onChange={e => setForm({ ...form, firstName: e.target.value })} />
+            </div>
+            <div className="field">
+              <label>Last name</label>
+              <input value={form.lastName} onChange={e => setForm({ ...form, lastName: e.target.value })} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Department</label>
+            <select value={form.departmentId} onChange={e => setForm({ ...form, departmentId: e.target.value })}>
+              {data.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          {isEdit && (
+            <div className="card-note" style={{ marginTop: 4 }}>
+              QR code stays the same when editing — the printed ID card keeps working.
+            </div>
+          )}
         </div>
-      </div>
-      <div className="field">
-        <label>Department</label>
-        <select value={form.departmentId} onChange={e => setForm({ ...form, departmentId: e.target.value })}>
-          {data.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
       </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
@@ -310,20 +405,32 @@ function AddTeacherModal({ onClose }: { onClose: () => void }): React.ReactEleme
           className="btn yellow"
           disabled={!form.firstName || !form.lastName}
           onClick={async () => {
-            const t: Teacher = {
-              id: `t_${Date.now().toString(36)}`,
-              qr: `T-${String(data.teachers.length + 31).padStart(4, '0')}`,
-              lastName: form.lastName,
-              firstName: form.firstName,
-              middleName: '',
-              departmentId: form.departmentId
-            };
-            await api.patchData({ teachers: [...data.teachers, t] });
+            if (isEdit && existing) {
+              const updated: Teacher = {
+                ...existing,
+                lastName: form.lastName,
+                firstName: form.firstName,
+                departmentId: form.departmentId,
+                ...(photo ? { photoData: photo } : { photoData: undefined })
+              };
+              await api.patchData({ teachers: data.teachers.map(t => (t.id === existing.id ? updated : t)) });
+            } else {
+              const t: Teacher = {
+                id: `t_${Date.now().toString(36)}`,
+                qr: `T-${String(data.teachers.length + 31).padStart(4, '0')}`,
+                lastName: form.lastName,
+                firstName: form.firstName,
+                middleName: '',
+                departmentId: form.departmentId,
+                ...(photo ? { photoData: photo } : {})
+              };
+              await api.patchData({ teachers: [...data.teachers, t] });
+            }
             void refresh();
             onClose();
           }}
         >
-          Add and create QR
+          {isEdit ? 'Save changes' : 'Add and create QR'}
         </button>
       </div>
     </Modal>
@@ -347,6 +454,7 @@ function PrintTeacherIdModal({ teacher, onClose }: { teacher: Teacher; onClose: 
           sub={dep?.name ? `${dep.name} Department` : 'Faculty Member'}
           sex="F"
           qr={teacher.qr}
+          photoData={teacher.photoData}
         />
       </div>
 

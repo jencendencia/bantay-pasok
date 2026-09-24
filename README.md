@@ -51,15 +51,15 @@ npm run dev            # vite dev server + electron
 - The module speaks AT commands (`AT+CMGF=1`, `AT+CMGS`), retries failed sends with backoff, and surfaces every message status in the dashboard sidebar.
 - Recommended cheap modem: SIM800L/SIM900 module over USB-serial. Make sure the SIM has load/credit and the antenna is attached.
 
-## MySQL database (optional)
+## SQLite database
 
-By default everything lives in a local JSON file so the kiosk needs no server. To centralise storage:
+Everything lives in a local SQLite database file — no server to install or configure. `data.json` is always written too, so it doubles as an automatic backup.
 
-1. Open **Settings → MySQL database**, enter host, port, user, password and a database name (created automatically).
-2. **Test connection**, then **Save and connect**. Tables are created on first connect and the existing `data.json` is imported if the database is empty.
-3. Every save then writes to `data.json` *and* syncs to MySQL (inserts, updates, deletes). If the server is unreachable, the app keeps running on JSON and retries on the next save.
+1. SQLite is **enabled by default**. The database file is created automatically at `%APPDATA%\Bantay Pasok\bantay-pasok-data\bantay-pasok.db` on first run.
+2. On first connect the tables are created and the existing `data.json` is imported if the database is empty.
+3. Every save writes to `data.json` *and* syncs to SQLite (inserts, updates, deletes). If the database file is locked or moved, the app keeps running on JSON and retries on the next save.
 
-Use **Import data.json now** to re-push the local file into MySQL at any time. Credentials are stored next to the data in `mysql.json`.
+Use **Import data.json now** (Settings → SQLite database) to re-push the local file into SQLite at any time. The configuration is stored next to the data in `sqlite.json`.
 
 ## Windows installer (deployment)
 
@@ -73,10 +73,10 @@ npm run dist:dir       # unpacked folder only (faster, for quick testing)
 - Output: `release/BantayPasok-Setup-<version>.exe` — run it on the school computer and follow the wizard (choose the install folder, desktop shortcut is created).
 - The app icon lives in `build/icon.png` (regenerate with `npm run icon`).
 - The GSM modem driver (`serialport`) is rebuilt for Electron automatically during packaging and unpacked from the asar at runtime.
-- User data (`data.json`, `mysql.json`) lives in `%APPDATA%\Bantay Pasok\bantay-pasok-data\` — it survives app updates and uninstalling. Back that folder up (or use the MySQL connection) when moving schools/PCs.
+- User data (`data.json`, `sqlite.json`, `bantay-pasok.db`) lives in `%APPDATA%\Bantay Pasok\bantay-pasok-data\` — it survives app updates and uninstalling. Back that folder up when moving schools/PCs.
 - If SmartScreen warns on first run (unsigned build), click *More info → Run anyway*.
 
 ## Notes
 
-- All data is stored in a local JSON file (`bantay-pasok-data/data.json` under the app's user-data folder) — MySQL is optional (see above).
-- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (22 checks: seed integrity, scan flows, duplicate suppression, SMS queue, Excel reports, GSM retry).
+- All data is stored in a local SQLite database (`bantay-pasok-data/bantay-pasok.db` under the app's user-data folder) with `data.json` kept as an automatic backup (see above).
+- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (22 checks: seed integrity, scan flows, duplicate suppression, SMS queue, Excel reports, GSM retry). Storage: `npm run db:test` (SQLite sync round-trip).

@@ -2,11 +2,45 @@ import React, { useMemo, useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
 import { Modal, Pill, Segmented } from '../ui';
-import { fmt12, timeToMin } from '../shared/constants';
-import type { Student } from '../shared/types';
+import { fmt12, timeToMin, gradePeriodsFor } from '../shared/constants';
+import { StudentFace } from '../components/StudentFace';
+import type { Section, Student } from '../shared/types';
 
 type SortKey = 'alpha' | 'arrival';
 type View = 'stats' | 'section';
+
+/** One CSV row split into cells, handling quotes and "" escapes. */
+export function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += c;
+    } else if (c === '"') inQ = true;
+    else if (c === ',') { out.push(cur); cur = ''; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+/** Parses CSV text into records keyed by (normalized) header names. */
+export function parseCsvTable(text: string): Record<string, string>[] {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/).filter(l => l.trim().length > 0);
+  if (lines.length === 0) return [];
+  const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z]/g, ''));
+  return lines.slice(1).map(line => {
+    const cells = parseCsvLine(line);
+    const row: Record<string, string> = {};
+    headers.forEach((h, i) => { if (h) row[h] = cells[i] ?? ''; });
+    return row;
+  });
+}
 
 function minutesOfDay(ts: number): number {
   const dt = new Date(ts);
@@ -22,8 +56,7 @@ export default function Sections(): React.ReactElement {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>('stats');
   const [manageOpen, setManageOpen] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newGrade, setNewGrade] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
 
   // NOTE: must stay before any early return (rules of hooks).
   // Attendance by time: arrivals per 15-min bucket (6:30, 6:45, 7:00, 7:15, 7:30, 7:45)
@@ -97,23 +130,6 @@ export default function Sections(): React.ReactElement {
     setView('section');
   };
 
-  const addSection = async (): Promise<void> => {
-    if (!newName.trim()) return;
-    const palette = ['#226756', '#1f85b6', '#d96b27', '#5c4e9e', '#4e5ba6', '#b6893b'];
-    await api.patchData({
-      sections: [...data.sections, {
-        id: `sec_${Date.now().toString(36)}`,
-        name: newName.trim(),
-        grade: newGrade.trim() || newName.trim().split(/\s+/)[0],
-        color: palette[data.sections.length % palette.length]
-      }]
-    });
-    setNewName('');
-    setNewGrade('');
-    setManageOpen(false);
-    void refresh();
-  };
-
   const roster = data.students.filter(s => s.sectionId === sec.id);
   const sorted = [...roster].sort((a, b) => {
     if (sort === 'alpha') return `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
@@ -155,7 +171,7 @@ export default function Sections(): React.ReactElement {
   const rosterTable = (list: Student[]): React.ReactElement => (
     <table className="table">
       <thead>
-        <tr><th>Name</th><th>Arrived</th><th>Status</th><th>Left</th><th>Parent SMS</th></tr>
+        <tr><th></th><th>Name</th><th>Arrived</th><th>Status</th><th>Left</th><th>Parent SMS</th></tr>
       </thead>
       <tbody>
         {list.map(st => {
@@ -165,6 +181,7 @@ export default function Sections(): React.ReactElement {
           const sent = sms.some(m => m.status === 'sent');
           return (
             <tr key={st.id}>
+              <td style={{ width: 46 }}><StudentFace student={st} size={34} /></td>
               <td><b>{st.lastName}, {st.firstName}</b></td>
               <td>{inEv ? new Date(inEv.ts).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }) : '—'}</td>
               <td>{statusPill(st)}</td>
@@ -181,7 +198,7 @@ export default function Sections(): React.ReactElement {
             </tr>
           );
         })}
-        {list.length === 0 && <tr><td colSpan={5} className="empty">No students in this section</td></tr>}
+        {list.length === 0 && <tr><td colSpan={6} className="empty">No students in this section</td></tr>}
       </tbody>
     </table>
   );
@@ -248,8 +265,15 @@ export default function Sections(): React.ReactElement {
           >
             ▤ All sections
           </button>
-          <button className="btn ghost small" title="Add or rename sections" onClick={() => setManageOpen(true)}>
+          <button className="btn ghost small" title="Add, rename or edit sections" onClick={() => setManageOpen(true)}>
             ⚙
+          </button>
+          <button
+            className="btn ghost small"
+            title="Import a student masterlist (CSV) and enrol rows into the selected section"
+            onClick={() => setImportOpen(true)}
+          >
+            ⬆ Import masterlist
           </button>
         </div>
       </div>
@@ -337,6 +361,7 @@ export default function Sections(): React.ReactElement {
                     checked={checked.has(st.id)}
                     onChange={() => toggleChecked(st.id)}
                   />
+                  <StudentFace student={st} size={32} />
                   <span style={{ flex: 1, fontWeight: 600 }}>
                     {st.lastName}, {st.firstName}{' '}
                     <Pill color={st.sex === 'M' ? 'blue' : 'purple'}>{st.sex === 'M' ? 'Male' : 'Female'}</Pill>
@@ -496,22 +521,279 @@ export default function Sections(): React.ReactElement {
       </div>
 
       {manageOpen && (
-        <Modal title="Add a section" sub="New sections appear in the switcher above and in the class program." onClose={() => setManageOpen(false)} width={420}>
+        <ManageSectionsModal
+          sections={data.sections}
+          onClose={() => setManageOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportMasterlistModal
+          section={sec}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
+
+    </div>
+  );
+}
+
+/** Add, rename or edit sections — including the grade level used for time slots. */
+function ManageSectionsModal({ sections, onClose }: { sections: Section[]; onClose: () => void }): React.ReactElement {
+  const { data, refresh } = useData();
+  const [newName, setNewName] = useState('');
+  const [newGrade, setNewGrade] = useState('');
+  const [edits, setEdits] = useState<Record<string, { name: string; grade: string }>>(
+    Object.fromEntries(sections.map(s => [s.id, { name: s.name, grade: s.grade }]))
+  );
+  if (!data) return <div />;
+
+  const applyEdit = async (id: string): Promise<void> => {
+    const e = edits[id];
+    if (!e || !e.name.trim()) return;
+    const next = data.sections.map(s => (s.id === id ? { ...s, name: e.name.trim(), grade: e.grade.trim() || s.grade } : s));
+    await api.patchData({ sections: next });
+    void refresh();
+  };
+
+  const addSection = async (): Promise<void> => {
+    if (!newName.trim()) return;
+    const palette = ['#226756', '#1f85b6', '#d96b27', '#5c4e9e', '#4e5ba6', '#b6893b'];
+    await api.patchData({
+      sections: [...data.sections, {
+        id: `sec_${Date.now().toString(36)}`,
+        name: newName.trim(),
+        grade: newGrade.trim() || newName.trim().split(/\s+/)[0],
+        color: palette[data.sections.length % palette.length]
+      }]
+    });
+    setNewName('');
+    setNewGrade('');
+    void refresh();
+  };
+
+  return (
+    <Modal title="Manage sections" sub="Rename sections, edit their grade level, or add a new section." onClose={onClose} width={560}>
+      <table className="table">
+        <thead><tr><th>Section name</th><th>Grade level</th><th></th></tr></thead>
+        <tbody>
+          {data.sections.map(s => {
+            const e = edits[s.id] ?? { name: s.name, grade: s.grade };
+            const dirty = e.name !== s.name || e.grade !== s.grade;
+            return (
+              <tr key={s.id}>
+                <td>
+                  <input
+                    value={e.name}
+                    placeholder="G7 • Ilang-Ilang"
+                    onChange={ev => setEdits({ ...edits, [s.id]: { ...e, name: ev.target.value } })}
+                    style={{ width: '100%' }}
+                  />
+                </td>
+                <td>
+                  <input
+                    value={e.grade}
+                    placeholder="Grade 7"
+                    onChange={ev => setEdits({ ...edits, [s.id]: { ...e, grade: ev.target.value } })}
+                    style={{ width: 110 }}
+                  />
+                </td>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <button
+                    className="btn primary small"
+                    disabled={!dirty || !e.name.trim()}
+                    onClick={() => void applyEdit(s.id)}
+                  >
+                    Save
+                  </button>{' '}
+                  <button
+                    className="btn ghost small"
+                    title="Set the standard time slots for this grade in the class program"
+                    onClick={() => void (async () => {
+                      const grade = e.grade.trim() || s.grade;
+                      const periods = gradePeriodsFor(grade);
+                      const mine = data.slots.filter(x => x.sectionId === s.id);
+                      const matched = new Set<string>();
+                      const updated = data.slots.map(x => {
+                        if (x.sectionId !== s.id) return x;
+                        const p = periods.find(pp => pp.start === x.start);
+                        if (p) { matched.add(x.id); return { ...x, end: p.end }; }
+                        return x;
+                      });
+                      const missing = periods.filter(p => !mine.some(m => m.start === p.start));
+                      const subjects = mine.map(m => m.subject);
+                      const added = missing.map((p, i) => ({
+                        id: `slot_${Date.now().toString(36)}_${i}`,
+                        sectionId: s.id,
+                        subject: subjects[i % Math.max(1, subjects.length)] || 'Subject',
+                        departmentId: mine[i % Math.max(1, mine.length)]?.departmentId || data.departments[0]?.id || '',
+                        teacherId: mine[i % Math.max(1, mine.length)]?.teacherId || data.teachers[0]?.id || '',
+                        start: p.start,
+                        end: p.end,
+                        days: [1, 2, 3, 4, 5]
+                      }));
+                      await api.patchData({ slots: [...updated, ...added] });
+                      void refresh();
+                    })()}
+                  >
+                    🕐 Time slots
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <div style={{ borderTop: '1px solid var(--line)', marginTop: 14, paddingTop: 12 }}>
+        <div className="form-row">
           <div className="field">
-            <label>Section name (e.g. "G7 • Ilang-Ilang")</label>
+            <label>New section name (e.g. "G7 • Ilang-Ilang")</label>
             <input value={newName} placeholder="G7 • Ilang-Ilang" onChange={e => setNewName(e.target.value)} />
           </div>
           <div className="field">
             <label>Grade level</label>
             <input value={newGrade} placeholder="Grade 7" onChange={e => setNewGrade(e.target.value)} />
           </div>
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setManageOpen(false)}>Cancel</button>
-            <button className="btn primary" disabled={!newName.trim()} onClick={() => void addSection()}>Add section</button>
-          </div>
-        </Modal>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn primary" disabled={!newName.trim()} onClick={() => void addSection()}>Add section</button>
+        </div>
+        <div className="card-note">
+          Time slots differ per grade level — use 🕐 to apply the standard periods for the grade to this section's class program.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Import a student masterlist CSV into the selected section (optionally into Guardians too). */
+function ImportMasterlistModal({ section, onClose }: { section: Section; onClose: () => void }): React.ReactElement {
+  const { data, refresh } = useData();
+  const [preview, setPreview] = useState<{ sex: 'M' | 'F'; last: string; first: string; guardian?: string; number?: string; email?: string }[]>([]);
+  const [alsoGuardians, setAlsoGuardians] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (!data) return <div />;
+
+  const readFile = (file: File | undefined): void => {
+    if (!file) return;
+    setErr(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rows = parseCsvTable(String(reader.result));
+      const get = (r: Record<string, string>, keys: string[]): string => {
+        for (const k of keys) if (r[k]) return r[k];
+        return '';
+      };
+      const parsed = rows.map(r => {
+        const last = get(r, ['lastname', 'surname', 'last']);
+        const first = get(r, ['firstname', 'givenname', 'first', 'middlename']) || get(r, ['name']);
+        const rawSex = (get(r, ['sex', 'gender']) || 'M').toUpperCase();
+        return {
+          sex: (rawSex.startsWith('F') ? 'F' : 'M') as 'M' | 'F',
+          last: last || first,
+          first: last ? first : first.split(/\s+/).slice(-1)[0] || first,
+          guardian: get(r, ['guardian', 'parent', 'parentguardian', 'nameofparentguardian']) || undefined,
+          number: get(r, ['number', 'mobile', 'contactnumber', 'mobilenumber', 'phone']) || undefined,
+          email: get(r, ['email', 'emailaddress']) || undefined
+        };
+      }).filter(r => r.last || r.first);
+      if (parsed.length === 0) setErr('No rows found. Expected columns like Last Name, First Name, Sex.');
+      setPreview(parsed);
+    };
+    reader.readAsText(file);
+  };
+
+  const doImport = async (): Promise<void> => {
+    const students = [...data.students];
+    const guardians = [...data.guardians];
+    for (const r of preview) {
+      let guardianId: string | null = null;
+      if (alsoGuardians) {
+        const parts = (r.guardian || '').trim().split(/\s+/);
+        const gFirst = parts[0] || ''; const gLast = parts.slice(1).join(' ') || r.last;
+        let g = guardians.find(x => x.firstName.toLowerCase() === gFirst.toLowerCase() && x.lastName.toLowerCase() === gLast.toLowerCase());
+        if (!g) {
+          g = {
+            id: `g_${Date.now().toString(36)}_${guardians.length}`,
+            lastName: gLast,
+            firstName: gFirst || 'Guardian',
+            number: r.number || '',
+            address: '',
+            ...(r.email ? { email: r.email } : {})
+          };
+          guardians.push(g);
+        }
+        guardianId = g.id;
+      }
+      let n = students.length + 420;
+      let qr: string;
+      do { qr = `S-2026-${String(n++).padStart(5, '0')}`; }
+      while (students.some(s => s.qr === qr) && n < 100000);
+      students.push({
+        id: `s_${Date.now().toString(36)}_${students.length}`,
+        qr,
+        lastName: r.last,
+        firstName: r.first,
+        middleName: '',
+        sex: r.sex,
+        number: r.number || '',
+        sectionId: section.id,
+        guardianId
+      });
+    }
+    await api.patchData(alsoGuardians ? { students, guardians } : { students });
+    void refresh();
+    onClose();
+  };
+
+  return (
+    <Modal title={`Import masterlist into ${section.name}`} sub="Pick a CSV file exported from Excel — columns are matched by name." onClose={onClose} width={560}>
+      <div className="field">
+        <label>CSV file</label>
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          onChange={e => { readFile(e.target.files?.[0]); e.target.value = ''; }}
+        />
+        <div className="card-note" style={{ marginTop: 4 }}>
+          Accepted columns: Last Name, First Name, Sex, Guardian, Mobile Number, Email Address. In Excel choose File → Save As → CSV.
+        </div>
+      </div>
+
+      <label className="check-row" style={{ cursor: 'pointer', marginTop: 6 }}>
+        <input type="checkbox" checked={alsoGuardians} onChange={e => setAlsoGuardians(e.target.checked)} />
+        <span style={{ fontWeight: 600 }}>Also create Guardians from the Guardian / Mobile columns</span>
+      </label>
+
+      {err && <div className="notice error" style={{ marginTop: 10 }}>⚠ {err}</div>}
+
+      {preview.length > 0 && (
+        <>
+          <div style={{ marginTop: 12, fontWeight: 700 }}>{preview.length} rows found — first 5:</div>
+          <table className="table">
+            <thead><tr><th>Sex</th><th>Last name</th><th>First name</th><th>Guardian</th><th>Mobile</th></tr></thead>
+            <tbody>
+              {preview.slice(0, 5).map((r, i) => (
+                <tr key={i}>
+                  <td>{r.sex === 'M' ? 'Male' : 'Female'}</td>
+                  <td>{r.last}</td>
+                  <td>{r.first}</td>
+                  <td>{r.guardian || '—'}</td>
+                  <td>{r.number || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
 
-    </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" disabled={preview.length === 0} onClick={() => void doImport()}>
+          Import {preview.length || ''} student{preview.length === 1 ? '' : 's'}
+        </button>
+      </div>
+    </Modal>
   );
 }

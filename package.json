@@ -1,7 +1,7 @@
 {
   "name": "bantay-pasok",
   "productName": "Bantay Pasok",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Real-time teachers and students attendance monitoring with QR scanning and parent SMS",
   "main": "dist-electron/electron/main.js",
   "author": "Bantay Pasok",
@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "npm run build && electron .",
     "icon": "node scripts/gen-icon.js",
+    "db:test": "node scripts/sqlite-test.cjs",
     "dist:dir": "npm run build && electron-builder --win --dir",
     "dist": "npm run build && electron-builder --win"
   },
@@ -31,7 +32,8 @@
     ],
     "asarUnpack": [
       "node_modules/serialport/**",
-      "node_modules/@serialport/**"
+      "node_modules/@serialport/**",
+      "node_modules/better-sqlite3/**"
     ],
     "win": {
       "target": [
@@ -59,9 +61,9 @@
   },
   "dependencies": {
     "@types/nodemailer": "^8.0.2",
+    "better-sqlite3": "^11.10.0",
     "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
-    "mysql2": "^3.24.4",
     "nodemailer": "^10.0.10",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
@@ -69,6 +71,7 @@
     "serialport": "^12.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.2",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.2",

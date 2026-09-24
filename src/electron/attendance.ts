@@ -164,13 +164,13 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     let msg: string;
     let cat: 'early' | 'on_time' | 'late';
     if (mins < early) {
-      msg = 'Early bird energy!\nHave an amazing day.';
+      msg = 'Swiped in!\nHave an amazing day.';
       cat = 'early';
     } else if (mins <= late) {
-      msg = 'Right on time!\nHave an amazing day.';
+      msg = 'Perfectly on time!\nHave an amazing day.';
       cat = 'on_time';
     } else {
-      msg = 'Glad you made it!\nHave an amazing day.';
+      msg = 'Just-in-time.\nHave an amazing day.';
       cat = 'late';
     }
     return {

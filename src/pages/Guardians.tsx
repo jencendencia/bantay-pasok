@@ -1,20 +1,44 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal } from '../ui';
+import { Modal, Segmented } from '../ui';
+import { parseCsvTable } from './Sections';
+
+function csvGet(r: Record<string, string>, keys: string[]): string {
+  for (const k of keys) if (r[k]) return r[k];
+  return '';
+}
 
 export default function Guardians(): React.ReactElement {
   const { data, refresh } = useData();
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [search, setSearch] = useState('');
+  const [sort, setSort] = useState<'alpha' | 'section'>('alpha');
   if (!data) return <div className="empty">Loading…</div>;
 
-  const q = search.trim().toLowerCase();
-  const list = data.guardians
+  const sectionName = (id: string | null): string =>
+    id ? data.sections.find(s => s.id === id)?.name ?? '' : '';
+
+  const withKids = data.guardians
     .map(g => {
-      const kids = data.students.filter(s => s.guardianId === g.id);
+      const kids = data.students
+        .filter(s => s.guardianId === g.id)
+        .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
       return { g, kids };
-    })
+    });
+
+  const sortedAll = [...withKids].sort((a, b) => {
+    if (sort === 'section') {
+      const sa = a.kids[0] ? sectionName(a.kids[0].sectionId) : '￿';
+      const sb = b.kids[0] ? sectionName(b.kids[0].sectionId) : '￿';
+      return sa.localeCompare(sb) || `${a.g.lastName} ${a.g.firstName}`.localeCompare(`${b.g.lastName} ${b.g.firstName}`);
+    }
+    return `${a.g.lastName} ${a.g.firstName}`.localeCompare(`${b.g.lastName} ${b.g.firstName}`);
+  });
+
+  const q = search.trim().toLowerCase();
+  const list = sortedAll
     .filter(({ g, kids }) =>
       !q ||
       `${g.firstName} ${g.lastName}`.toLowerCase().includes(q) ||
@@ -32,7 +56,10 @@ export default function Guardians(): React.ReactElement {
           <h1 className="page-title">Guardians</h1>
           <div className="page-sub">Enrol guardians who receive the SMS notifications</div>
         </div>
-        <button className="btn yellow" onClick={() => setAdding(true)}>＋ Add guardian</button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn ghost" onClick={() => setImporting(true)}>⬆ Import masterlist</button>
+          <button className="btn yellow" onClick={() => setAdding(true)}>＋ Add guardian</button>
+        </div>
       </div>
 
       <div className="card">
@@ -42,23 +69,40 @@ export default function Guardians(): React.ReactElement {
             <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 500 }}> (Total: {data.guardians.length})</span>
           </h3>
           <div className="spacer" />
+          <span className="toolbar-label">Sort by</span>
+          <Segmented
+            options={[
+              { id: 'alpha' as const, label: 'Alphabetical' },
+              { id: 'section' as const, label: 'Section' }
+            ]}
+            value={sort}
+            onChange={setSort}
+          />
           <input
             value={search}
             placeholder="Search guardian, child, number…"
             onChange={e => setSearch(e.target.value)}
-            style={{ width: 240, padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)' }}
+            style={{ width: 220, padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)' }}
           />
         </div>
         <table className="table">
-          <thead><tr><th>Name</th><th>Mobile number</th><th>Email</th><th>Address</th><th>Children</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Name of Parent/Guardian</th>
+              <th>Mobile Number</th>
+              <th>Email Address</th>
+              <th>Children</th>
+              <th>Section</th>
+            </tr>
+          </thead>
           <tbody>
             {list.map(({ g, kids }) => (
               <tr key={g.id}>
                 <td><b>{g.lastName}, {g.firstName}</b></td>
-                <td>{g.number}</td>
+                <td>{g.number || <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                 <td>{g.email || <span style={{ color: 'var(--muted)' }}>—</span>}</td>
-                <td>{g.address}</td>
                 <td>{kids.length ? kids.map(k => `${k.firstName} ${k.lastName}`).join(', ') : '—'}</td>
+                <td>{kids[0] ? sectionName(kids[0].sectionId) || <span style={{ color: 'var(--muted)' }}>—</span> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
               </tr>
             ))}
             {list.length === 0 && data.guardians.length > 0 && (
@@ -68,6 +112,8 @@ export default function Guardians(): React.ReactElement {
           </tbody>
         </table>
       </div>
+
+      {importing && <ImportGuardiansModal onClose={() => setImporting(false)} />}
 
       {adding && (
         <Modal title="Add a guardian" onClose={() => setAdding(false)} width={500}>
@@ -169,5 +215,122 @@ function GuardianForm({
           onClick={() => onDone({ id: `g_${Date.now().toString(36)}`, ...f }, picked.map(p => p.id))}>Save guardian</button>
       </div>
     </>
+  );
+}
+
+/** Import a guardian masterlist CSV and link each row's child by name. */
+function ImportGuardiansModal({ onClose }: { onClose: () => void }): React.ReactElement {
+  const { data, refresh } = useData();
+  const [preview, setPreview] = useState<{ name: string; number: string; email: string; child: string }[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  if (!data) return <div />;
+
+  const readFile = (file: File | undefined): void => {
+    if (!file) return;
+    setErr(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rows = parseCsvTable(String(reader.result));
+      const parsed = rows.map(r => ({
+        name: csvGet(r, ['nameofparentguardian', 'parentguardian', 'guardian', 'parent', 'name']),
+        number: csvGet(r, ['mobilenumber', 'mobile', 'contactnumber', 'number', 'phone']),
+        email: csvGet(r, ['emailaddress', 'email']),
+        child: csvGet(r, ['nameofchild', 'child', 'student', 'studentname'])
+      })).filter(r => r.name || r.child);
+      if (parsed.length === 0) setErr('No rows found. Expected columns like Name of Parent/Guardian, Mobile Number, Email Address, Name of child.');
+      setPreview(parsed);
+    };
+    reader.readAsText(file);
+  };
+
+  const doImport = async (): Promise<void> => {
+    const guardians = [...data.guardians];
+    const students = [...data.students];
+    let linked = 0;
+    for (const r of preview) {
+      if (!r.name) continue;
+      // "Dela Cruz, Maria" -> last=Dela Cruz first=Maria; otherwise "First Last"
+      let gLast: string, gFirst: string;
+      if (r.name.includes(',')) {
+        const [a, b] = r.name.split(',');
+        gLast = a.trim(); gFirst = (b || '').trim();
+      } else {
+        const parts = r.name.trim().split(/\s+/);
+        gFirst = parts[0] || '';
+        gLast = parts.slice(1).join(' ') || parts[0] || '';
+      }
+      let g = guardians.find(x =>
+        x.firstName.toLowerCase() === gFirst.toLowerCase() &&
+        x.lastName.toLowerCase() === gLast.toLowerCase());
+      if (!g) {
+        g = {
+          id: `g_${Date.now().toString(36)}_${guardians.length}`,
+          lastName: gLast,
+          firstName: gFirst || 'Guardian',
+          number: r.number,
+          address: '',
+          ...(r.email ? { email: r.email } : {})
+        };
+        guardians.push(g);
+      }
+      if (r.child) {
+        const c = r.child.trim().toLowerCase();
+        const kid = students.find(s =>
+          `${s.firstName} ${s.lastName}`.toLowerCase() === c ||
+          `${s.lastName} ${s.firstName}`.toLowerCase() === c);
+        if (kid) {
+          kid.guardianId = g.id;
+          linked++;
+        }
+      }
+    }
+    await api.patchData({ guardians, students });
+    window.alert(`Imported ${preview.filter(r => r.name).length} guardians, linked ${linked} child${linked === 1 ? '' : 'ren'} by name.`);
+    void refresh();
+    onClose();
+  };
+
+  return (
+    <Modal title="Import guardian masterlist" sub="Pick a CSV file exported from Excel — children are linked by name." onClose={onClose} width={560}>
+      <div className="field">
+        <label>CSV file</label>
+        <input
+          type="file"
+          accept=".csv,text/csv"
+          onChange={e => { readFile(e.target.files?.[0]); e.target.value = ''; }}
+        />
+        <div className="card-note" style={{ marginTop: 4 }}>
+          Accepted columns: Name of Parent/Guardian, Mobile Number, Email Address, Name of child. In Excel choose File → Save As → CSV.
+        </div>
+      </div>
+
+      {err && <div className="notice error" style={{ marginTop: 10 }}>⚠ {err}</div>}
+
+      {preview.length > 0 && (
+        <>
+          <div style={{ marginTop: 12, fontWeight: 700 }}>{preview.length} rows found — first 5:</div>
+          <table className="table">
+            <thead><tr><th>Name of Parent/Guardian</th><th>Mobile Number</th><th>Email Address</th><th>Name of child</th></tr></thead>
+            <tbody>
+              {preview.slice(0, 5).map((r, i) => (
+                <tr key={i}>
+                  <td>{r.name || '—'}</td>
+                  <td>{r.number || '—'}</td>
+                  <td>{r.email || '—'}</td>
+                  <td>{r.child || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn primary" disabled={preview.length === 0} onClick={() => void doImport()}>
+          Import {preview.length || ''} guardian{preview.length === 1 ? '' : 's'}
+        </button>
+      </div>
+    </Modal>
   );
 }

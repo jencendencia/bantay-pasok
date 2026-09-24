@@ -2,8 +2,8 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
 import {
   loadData, patchData, saveData, flushSave, getDataDir,
-  initStore, getDbConfig, applyDbConfig, connectMysql, disconnectMysql,
-  importJsonToMysql, dbStatus
+  initStore, getDbConfig, applyDbConfig, connectSqlite, disconnectSqlite,
+  importJsonToSqlite, dbStatus
 } from './store';
 import type { AppData } from '../shared/types';
 import { processScan } from './attendance';
@@ -132,7 +132,7 @@ function registerIpc(): void {
                 res.kind === 'student_in' ? 'arrival' : 'departure',
                 `${student.firstName} ${student.lastName}`,
                 new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }),
-                res.kind === 'student_in' ? (res.message.includes('Early') ? 'early' : res.message.includes('Right on time') ? 'on time' : 'late') : undefined,
+                res.kind === 'student_in' ? (res.statusCategory === 'early' ? 'early' : res.statusCategory === 'on_time' ? 'on time' : 'late') : undefined,
                 d.settings.schoolName
               ),
               studentId: student.id,
@@ -147,7 +147,7 @@ function registerIpc(): void {
           if (email) {
             const time12 = new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
             const punctual = res.kind === 'student_in'
-              ? (res.message.includes('Early') ? 'early' : res.message.includes('Right on time') ? 'on time' : 'late')
+              ? (res.statusCategory === 'early' ? 'early' : res.statusCategory === 'on_time' ? 'on time' : 'late')
               : undefined;
             const { subject, body } = EmailModule.parentMail(
               res.kind === 'student_in' ? 'arrival' : 'departure',
@@ -267,7 +267,7 @@ function registerIpc(): void {
     const cfg = getDbConfig();
     return ok({
       ...dbStatus(),
-      config: { ...cfg, password: '' }
+      config: cfg
     });
   });
 
@@ -278,20 +278,20 @@ function registerIpc(): void {
   });
 
   ipcMain.handle('db:connect', async (): Promise<IpcResult> => {
-    const res = await connectMysql();
+    const res = await connectSqlite();
     if (res.ok) broadcast('data:changed', loadData());
     return res.ok ? ok(true) : fail(new Error(res.error ?? 'Connection failed'));
   });
 
   ipcMain.handle('db:disconnect', (): IpcResult => {
-    disconnectMysql();
+    disconnectSqlite();
     broadcast('data:changed', loadData());
     return ok(true);
   });
 
   ipcMain.handle('db:importJson', async (): Promise<IpcResult> => {
     try {
-      await importJsonToMysql();
+      await importJsonToSqlite();
       broadcast('data:changed', loadData());
       return ok(true);
     } catch (err) { return fail(err); }
@@ -325,7 +325,7 @@ function registerIpc(): void {
 let quitting = false;
 app.on('before-quit', e => {
   if (!quitting) {
-    // Hold the quit until the stores are flushed (JSON is sync, MySQL is async).
+    // Hold the quit until the stores are flushed (flushSave is async).
     e.preventDefault();
     quitting = true;
     void flushSave().finally(() => {

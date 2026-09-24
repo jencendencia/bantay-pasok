@@ -60,6 +60,14 @@ export default function Dashboard(): React.ReactElement {
   const studentsPresent = new Set(data.attendance.filter(e => e.date === dateStr && e.kind === 'in').map(e => e.studentId)).size;
   const smsSent = data.sms.filter(m => m.status === 'sent' && new Date(m.ts).toDateString() === now.toDateString()).length;
 
+  // Students present per section (for the tally under "Latest scans")
+  const presentIds = new Set(data.attendance.filter(e => e.date === dateStr && e.kind === 'in').map(e => e.studentId));
+  const presentBySection = data.sections.map(secC => {
+    const studs = data.students.filter(s => s.sectionId === secC.id);
+    const present = studs.filter(s => presentIds.has(s.id)).length;
+    return { id: secC.id, name: secC.name, present, total: studs.length };
+  });
+
   const latestScans = [...data.scans].sort((a, b) => b.ts - a.ts).slice(0, 8).map(sc => {
     const t = data.teachers.find(x => x.id === sc.personId);
     const s = data.students.find(x => x.id === sc.personId);
@@ -101,12 +109,14 @@ export default function Dashboard(): React.ReactElement {
       <button
         key={slot.id}
         className={`slot ${cls}`}
+        disabled={isHoliday}
+        style={isHoliday ? { cursor: 'not-allowed' } : undefined}
         onClick={() => {
-          if (!isBrw) {
+          if (!isHoliday && !isBrw) {
             setReasonSlot({ slot, status: st ? { reason: String(st.reason), note: st.note } : null });
           }
         }}
-        title={isBrw ? 'Class is borrowed' : ev ? 'Teacher is in' : 'Click to record a reason'}
+        title={isBrw ? 'Class is borrowed' : ev ? 'Teacher is in' : isHoliday ? 'Locked — it is a holiday' : 'Click to record a reason'}
       >
         <span className="s-subject">{slot.subject}</span>
         {isBrw ? (
@@ -132,6 +142,7 @@ export default function Dashboard(): React.ReactElement {
   };
 
   const toggleBorrowPending = (id: string) => {
+    if (isHoliday) return; // locked while the holiday is on
     if (id === 'all') {
       if (borrowPending.includes('all')) setBorrowPending([]);
       else setBorrowPending(['all', ...data.sections.map(s => s.id)]);
@@ -154,19 +165,24 @@ export default function Dashboard(): React.ReactElement {
         {/* Holiday Button */}
         <button
           className={`btn ${isHoliday ? 'primary' : 'ghost'}`}
+          title={isHoliday ? 'Fields are locked while the holiday is on' : 'Press to lock the dashboard for a holiday'}
           onClick={async () => {
             await api.patchData({ holiday: { date: isHoliday ? null : dateStr } });
             void refresh();
           }}
         >
-          ⚐ {isHoliday ? 'Holiday active' : 'Holiday'}
+          ⚐ {isHoliday ? 'Holiday active — fields locked' : 'Holiday'}
         </button>
 
         {/* Class Borrowed Dropdown (06c_admin_dashboard_class_borrowed.png) */}
         <div style={{ position: 'relative' }}>
           <button
             className={`btn ${borrowed.length ? 'primary' : 'ghost'}`}
+            disabled={isHoliday}
+            style={isHoliday ? { cursor: 'not-allowed' } : undefined}
+            title={isHoliday ? 'Locked — it is a holiday' : 'Choose sections whose teachers are excused today'}
             onClick={() => {
+              if (isHoliday) return;
               setBorrowPending(borrowed.includes('all') ? ['all', ...data.sections.map(s => s.id)] : [...borrowed]);
               setBorrowOpen(!borrowOpen);
             }}
@@ -206,6 +222,7 @@ export default function Dashboard(): React.ReactElement {
                 <button className="btn ghost small" onClick={() => setBorrowOpen(false)}>Cancel</button>
                 <button
                   className="btn primary small"
+                  disabled={isHoliday}
                   onClick={async () => {
                     const final = borrowPending.includes('all') ? ['all'] : borrowPending;
                     await api.patchData({ borrowed: { sections: final } });
@@ -302,6 +319,35 @@ export default function Dashboard(): React.ReactElement {
               </div>
             ))}
             {latestScans.length === 0 && <div className="empty">No scans recorded yet today</div>}
+          </div>
+
+          {/* Present-per-section tally (right under the live scan feed) */}
+          <div style={{ borderTop: '1px solid var(--line)', marginTop: 12, paddingTop: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+              Present per section
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {presentBySection.map(r => (
+                <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: '#142a22', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {r.name}
+                  </span>
+                  <span style={{ width: 70, height: 8, borderRadius: 999, background: '#e7efe9', overflow: 'hidden', flex: 'none' }}>
+                    <span
+                      style={{
+                        display: 'block', height: '100%',
+                        width: `${r.total ? Math.round((r.present / r.total) * 100) : 0}%`,
+                        background: r.present === r.total && r.total > 0 ? '#279655' : '#1f85b6'
+                      }}
+                    />
+                  </span>
+                  <span style={{ width: 44, textAlign: 'right', fontSize: 12.5, fontVariantNumeric: 'tabular-nums', color: 'var(--muted)', flex: 'none' }}>
+                    {r.present}/{r.total}
+                  </span>
+                </div>
+              ))}
+              {presentBySection.length === 0 && <div className="empty">No sections yet</div>}
+            </div>
           </div>
         </div>
       </div>

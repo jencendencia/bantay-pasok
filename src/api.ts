@@ -4,11 +4,7 @@ import { timeToMin, fmt12 } from './shared/constants';
 
 export interface DbConfigView {
   enabled: boolean;
-  host: string;
-  port: number;
-  user: string;
-  password: string;
-  database: string;
+  file: string;
 }
 
 export interface BantayApi {
@@ -140,10 +136,10 @@ function createBrowserFallback(): BantayApi {
         const mins = dt.getHours() * 60 + dt.getMinutes();
         const earlyC = timeToMin(d.settings.earlyCutoff);
         const lateC = timeToMin(d.settings.lateAfter);
-        let msg = 'Glad you made it!\nHave an amazing day.';
+        let msg = 'Just-in-time.\nHave an amazing day.';
         let cat: 'early' | 'on_time' | 'late' = 'late';
-        if (mins < earlyC) { msg = 'Early bird energy!\nHave an amazing day.'; cat = 'early'; }
-        else if (mins <= lateC) { msg = 'Right on time!\nHave an amazing day.'; cat = 'on_time'; }
+        if (mins < earlyC) { msg = 'Swiped in!\nHave an amazing day.'; cat = 'early'; }
+        else if (mins <= lateC) { msg = 'Perfectly on time!\nHave an amazing day.'; cat = 'on_time'; }
 
         // queue mock SMS to guardian (real pipeline resolves the guardian's number; st.number is the fallback)
         const guardianIn = st.guardianId ? d.guardians.find(g => g.id === st.guardianId) : null;
@@ -313,21 +309,21 @@ function createBrowserFallback(): BantayApi {
         data: {
           enabled: false,
           lastError: null,
-          config: { enabled: false, host: '127.0.0.1', port: 3306, user: 'root', password: '', database: 'bantay_pasok' }
+          config: { enabled: false, file: '' }
         }
       };
     },
     async saveDbConfig(_cfg, _testOnly) {
-      return { ok: false, error: 'MySQL is only available in the desktop app' } as IpcResult<{ ok: boolean; error?: string }>;
+      return { ok: false, error: 'SQLite is only available in the desktop app' } as IpcResult<{ ok: boolean; error?: string }>;
     },
     async dbConnect() {
-      return { ok: false, error: 'MySQL is only available in the desktop app' };
+      return { ok: false, error: 'SQLite is only available in the desktop app' };
     },
     async dbDisconnect() {
       return { ok: true };
     },
     async dbImportJson() {
-      return { ok: false, error: 'MySQL is only available in the desktop app' };
+      return { ok: false, error: 'SQLite is only available in the desktop app' };
     },
     async updateStatus() {
       return { ok: false, error: 'Software updates are only available in the desktop app' } as IpcResult<UpdateStatusInfo>;

@@ -47,8 +47,8 @@ const PERIODS = [
 ];
 
 const SUBJECTS_ROT = [
-  ['Math', 'dep_math'], ['English', 'dep_english'], ['Filipino', 'dep_filipino'], ['Science', 'dep_science'],
-  ['TLE', 'dep_tle'], ['Araling Panlipunan', 'dep_ap'], ['MAPEH', 'dep_mapeh'], ['ESP', 'dep_esp']
+  ['Mathematics', 'dep_math'], ['English', 'dep_english'], ['Filipino', 'dep_filipino'], ['Science', 'dep_science'],
+  ['T.L.E.', 'dep_tle'], ['Araling Panlipunan', 'dep_ap'], ['MAPEH', 'dep_mapeh'], ['ESP', 'dep_esp']
 ];
 
 const MALE_FIRST = ['Kenneth', 'Nathaniel', 'Juan Miguel', 'Christian', 'Paolo', 'Carlo', 'Miguel', 'Jerome', 'Andres', 'Rafael', 'Diego', 'Marco', 'Felix', 'Ivan', 'Joshua', 'Karl', 'Leo', 'Manuel', 'Nico', 'Oscar', 'Patrick', 'Ramir', 'Sergio', 'Tomas'];

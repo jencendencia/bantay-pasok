@@ -43,7 +43,7 @@ export default function SettingsPage(): React.ReactElement {
   }, []);
   if (!data) return <div className="empty">Loading…</div>;
   // Edits stay in a local draft until "Save changes"; the effect re-syncs the draft whenever
-  // saved data changes (initial load, or after a save round-trips through the store → MySQL).
+  // saved data changes (initial load, or after a save round-trips through the store → SQLite).
   React.useEffect(() => { setDraft(data.settings); }, [data.settings]);
   const s = draft ?? data.settings;
 
@@ -288,7 +288,7 @@ export default function SettingsPage(): React.ReactElement {
 
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>MySQL database</h3>
+              <h3>SQLite database</h3>
               {dbState && <Pill color={dbState.enabled ? 'green' : 'gray'}>{dbState.enabled ? 'Connected' : 'Local JSON'}</Pill>}
             </div>
             {dbForm && (
@@ -299,31 +299,11 @@ export default function SettingsPage(): React.ReactElement {
                     checked={dbForm.enabled}
                     onChange={e => setDbForm({ ...dbForm, enabled: e.target.checked })}
                   />
-                  Store attendance in MySQL (JSON stays as automatic backup)
+                  Store attendance in SQLite (JSON stays as automatic backup)
                 </label>
-                <div className="form-row">
-                  <div className="field">
-                    <label>Host</label>
-                    <input value={dbForm.host} placeholder="127.0.0.1" onChange={e => setDbForm({ ...dbForm, host: e.target.value })} />
-                  </div>
-                  <div className="field" style={{ maxWidth: 110 }}>
-                    <label>Port</label>
-                    <input type="number" value={dbForm.port} onChange={e => setDbForm({ ...dbForm, port: Number(e.target.value) || 3306 })} />
-                  </div>
-                </div>
-                <div className="form-row">
-                  <div className="field">
-                    <label>User</label>
-                    <input value={dbForm.user} placeholder="root" onChange={e => setDbForm({ ...dbForm, user: e.target.value })} />
-                  </div>
-                  <div className="field">
-                    <label>Password</label>
-                    <input type="password" value={dbForm.password} onChange={e => setDbForm({ ...dbForm, password: e.target.value })} />
-                  </div>
-                </div>
                 <div className="field">
-                  <label>Database (created automatically)</label>
-                  <input value={dbForm.database} placeholder="bantay_pasok" onChange={e => setDbForm({ ...dbForm, database: e.target.value })} />
+                  <label>Database file (created automatically)</label>
+                  <input value={dbForm.file} placeholder="Leave empty for the default location" onChange={e => setDbForm({ ...dbForm, file: e.target.value })} />
                 </div>
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 4 }}>
                   <button
@@ -332,7 +312,7 @@ export default function SettingsPage(): React.ReactElement {
                     onClick={async () => {
                       setDbBusy(true); setDbMsg(null);
                       const res = await api.saveDbConfig(dbForm, true);
-                      setDbMsg(res.ok && res.data?.ok ? `Connection OK — MySQL ${res.data.version}` : (res.data?.error ?? res.error ?? 'Failed'));
+                      setDbMsg(res.ok && res.data?.ok ? `Connection OK — SQLite ${res.data.version}` : (res.data?.error ?? res.error ?? 'Failed'));
                       setDbBusy(false);
                     }}
                   >
@@ -369,7 +349,7 @@ export default function SettingsPage(): React.ReactElement {
                       onClick={async () => {
                         setDbBusy(true); setDbMsg(null);
                         const res = await api.dbImportJson();
-                        setDbMsg(res.ok ? 'Local data.json imported into MySQL.' : res.error ?? 'Import failed');
+                        setDbMsg(res.ok ? 'Local data.json imported into SQLite.' : res.error ?? 'Import failed');
                         setDbBusy(false);
                       }}
                     >
@@ -382,7 +362,7 @@ export default function SettingsPage(): React.ReactElement {
                   <div className="card-note" style={{ color: 'var(--red)', marginTop: 4 }}>Last database error: {dbState.lastError}</div>
                 )}
                 <div className="card-note" style={{ marginTop: 8 }}>
-                  Every save writes to data.json first, then syncs to MySQL — if the server goes down the kiosk keeps working and catches up on reconnect.
+                  Every save writes to data.json first, then syncs to the local SQLite database file — the kiosk keeps working even if the file is locked or moved.
                   Settings, holidays and borrowed classes are stored too. Turning this off keeps all data in the local JSON file.
                 </div>
               </>
