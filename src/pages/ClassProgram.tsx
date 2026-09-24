@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Pill } from '../ui';
+import { Modal, Pill, confirmDialog } from '../ui';
 import { SUBJECTS, DEPARTMENTS, fmt12 } from '../shared/constants';
 import type { AppData, Slot } from '../shared/types';
 
@@ -82,6 +82,31 @@ function daysLabel(days: number[]): string {
 }
 
 /**
+ * Double-booking block: shows the conflict and an admin override checkbox.
+ * Save buttons stay disabled until the override is ticked; callers reset the
+ * override whenever the schedule fields change so a ticked box can never
+ * silently approve a different conflict.
+ */
+function ConflictNotice({ message, override, onOverride }: {
+  message: string;
+  override: boolean;
+  onOverride: (v: boolean) => void;
+}): React.ReactElement {
+  return (
+    <div className="notice" style={{ marginBottom: 12 }}>
+      <span>⚠</span>
+      <div>
+        {message}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, fontWeight: 600, fontSize: 13 }}>
+          <input type="checkbox" checked={override} onChange={e => onOverride(e.target.checked)} />
+          Save anyway (admin override)
+        </label>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Warns when a teacher is already booked at an overlapping time on a shared day.
  * Pass excludeSlotId when checking an edited slot so it does not conflict with itself.
  */
@@ -155,6 +180,9 @@ export default function ClassProgram(): React.ReactElement {
     teacherId: ''
   });
   const [err, setErr] = useState<string | null>(null);
+  const [override, setOverride] = useState(false);
+  // A ticked override only ever approves the conflict it was ticked for.
+  React.useEffect(() => { setOverride(false); }, [form.teacherId, form.start, form.end, form.days]);
 
   // NOTE: must stay before any early return (rules of hooks).
   const conflict = useMemo(() => {
@@ -183,6 +211,7 @@ export default function ClassProgram(): React.ReactElement {
     if (!teacherAssignedId) { setErr('Please choose a teacher'); return; }
     if (form.start >= form.end) { setErr('End time must be after start time'); return; }
     if (form.days.length === 0) { setErr('Select at least one day'); return; }
+    if (conflict && !override) { setErr('Tick “Save anyway” to schedule this double-booked slot.'); return; }
 
     // The department field holds a name: resolve it, enrolling a new department on first use.
     const depName = form.departmentId.trim() || 'General';
@@ -307,9 +336,8 @@ export default function ClassProgram(): React.ReactElement {
 
           {/* Double-booking warning banner (08_admin_class_program_tab.png) */}
           {conflict && (
-            <div className="notice" style={{ marginTop: 8, marginBottom: 12 }}>
-              <span>⚠</span>
-              <div>{conflict}</div>
+            <div style={{ marginTop: 8 }}>
+              <ConflictNotice message={conflict} override={override} onOverride={setOverride} />
             </div>
           )}
 
@@ -319,6 +347,7 @@ export default function ClassProgram(): React.ReactElement {
             <button
               className="btn yellow"
               style={{ flex: 1 }}
+              disabled={!!conflict && !override}
               onClick={() => void handleAddSlot()}
             >
               ＋ Add slot
@@ -396,7 +425,7 @@ export default function ClassProgram(): React.ReactElement {
                         className="btn ghost small"
                         style={{ padding: '4px 8px' }}
                         onClick={async () => {
-                          if (!window.confirm(`Delete the ${s.subject} slot (${fmt12(s.start)}–${fmt12(s.end)})? This cannot be undone.`)) return;
+                          if (!(await confirmDialog({ message: `Delete the ${s.subject} slot (${fmt12(s.start)}–${fmt12(s.end)})? This cannot be undone.`, destructive: true }))) return;
                           await api.patchData({ slots: data.slots.filter(x => x.id !== s.id) });
                           void refresh();
                         }}
@@ -529,6 +558,9 @@ function EditSlotModal({ slot, onClose }: { slot: Slot; onClose: () => void }): 
     days: slot.days
   });
   const [err, setErr] = useState<string | null>(null);
+  const [override, setOverride] = useState(false);
+  // A ticked override only ever approves the conflict it was ticked for.
+  React.useEffect(() => { setOverride(false); }, [form.teacherId, form.start, form.end, form.days]);
   // Same double-booking warning as the Add form, ignoring the slot being edited.
   // NOTE: must stay before any early return (rules of hooks).
   const conflict = useMemo(() => {
@@ -587,21 +619,18 @@ function EditSlotModal({ slot, onClose }: { slot: Slot; onClose: () => void }): 
           {data.teachers.map(t => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}
         </select>
       </div>
-      {conflict && (
-        <div className="notice" style={{ marginBottom: 12 }}>
-          <span>⚠</span>
-          <div>{conflict}</div>
-        </div>
-      )}
+      {conflict && <ConflictNotice message={conflict} override={override} onOverride={setOverride} />}
       {err && <div className="notice error" style={{ marginBottom: 12 }}>⚠ {err}</div>}
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button
           className="btn primary"
+          disabled={!!conflict && !override}
           onClick={async () => {
             setErr(null);
             if (form.start >= form.end) { setErr('End time must be after start time'); return; }
             if (form.days.length === 0) { setErr('Select at least one day — a slot with no days never appears in the schedule.'); return; }
+            if (conflict && !override) { setErr('Tick “Save anyway” to schedule this double-booked slot.'); return; }
             // Resolve the department name to an id, enrolling it on first use.
             const depName = form.departmentName.trim() || 'General';
             let departmentId = data.departments.find(d => d.name.toLowerCase() === depName.toLowerCase())?.id;

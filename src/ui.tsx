@@ -84,6 +84,95 @@ export function Pill({ color, children }: { color: string; children: React.React
   return <span className={`pill ${color}`}>{children}</span>;
 }
 
+// ── Promise-based confirm/alert dialogs ────────────────────────────────────
+// Replaces window.confirm/window.alert with an app-styled modal that supports
+// Esc, Enter and a danger style for destructive actions.
+
+export interface DialogOptions {
+  /** Body text; wraps naturally. */
+  message: string;
+  /** Modal heading. Defaults to "Please confirm" / "Notice". */
+  title?: string;
+  /** Confirm button label. Defaults to "Confirm" / "Delete" for destructive dialogs. */
+  confirmLabel?: string;
+  /** Red confirm button + warning icon, for deletions. */
+  destructive?: boolean;
+}
+
+interface ActiveDialog extends DialogOptions {
+  kind: 'confirm' | 'alert';
+  resolve: (v: boolean) => void;
+}
+
+let pushDialog: ((d: ActiveDialog) => void) | null = null;
+
+/** App-styled replacement for window.confirm. Resolves true when confirmed. */
+export function confirmDialog(opts: string | DialogOptions): Promise<boolean> {
+  const o = typeof opts === 'string' ? { message: opts } : opts;
+  return new Promise(resolve => {
+    pushDialog?.({ ...o, kind: 'confirm', resolve });
+  });
+}
+
+/** App-styled replacement for window.alert. */
+export function alertDialog(message: string, title?: string): Promise<void> {
+  return new Promise(resolve => {
+    pushDialog?.({ message, title, kind: 'alert', resolve: () => resolve() });
+  });
+}
+
+/** Mounted once per window (App and the scanner render it at their roots). */
+export function DialogHost(): React.ReactElement {
+  const [dialog, setDialog] = useState<ActiveDialog | null>(null);
+  useEffect(() => {
+    pushDialog = (d: ActiveDialog) => setDialog(d);
+    return () => { pushDialog = null; };
+  }, []);
+
+  const close = (result: boolean): void => {
+    if (!dialog) return;
+    setDialog(null);
+    dialog.resolve(result);
+  };
+
+  useEffect(() => {
+    if (!dialog) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+      if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
+  if (!dialog) return <div />;
+  const isAlert = dialog.kind === 'alert';
+  const danger = dialog.destructive ?? false;
+  const title = dialog.title ?? (danger ? 'Delete?' : isAlert ? 'Notice' : 'Please confirm');
+  const confirmLabel = dialog.confirmLabel ?? (danger ? 'Delete' : isAlert ? 'OK' : 'Confirm');
+
+  return (
+    <div className="modal-backdrop dialog-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close(isAlert ? true : false); }}>
+      <div className="modal dialog-modal" role="alertdialog" aria-modal="true">
+        <div className={`dialog-icon ${danger ? 'danger' : isAlert ? 'info' : 'warn'}`}>{danger ? '🗑' : isAlert ? 'ℹ' : '⚠'}</div>
+        <h2>{title}</h2>
+        <div className="dialog-message">{dialog.message}</div>
+        {!isAlert && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => close(false)}>Cancel</button>
+            <button className={`btn ${danger ? 'danger' : 'primary'}`} autoFocus onClick={() => close(true)}>{confirmLabel}</button>
+          </div>
+        )}
+        {isAlert && (
+          <div className="modal-actions">
+            <button className="btn primary" autoFocus onClick={() => close(true)}>OK</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Segmented<T extends string>({ options, value, onChange }: {
   options: { id: T; label: string }[]; value: T; onChange: (v: T) => void;
 }): React.ReactElement {

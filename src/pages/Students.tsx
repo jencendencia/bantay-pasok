@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Pill, AvatarIcon, printNodes } from '../ui';
+import { Modal, Pill, AvatarIcon, printNodes, confirmDialog, alertDialog } from '../ui';
 import { IdCard } from '../components/IdCard';
 import { StudentFace } from '../components/StudentFace';
 import type { Student } from '../shared/types';
@@ -68,7 +68,7 @@ export default function Students(): React.ReactElement {
               onClick={async () => {
                 const picks = data.students.filter(s => selected.has(s.id));
                 if (picks.length === 0) { setSelected(new Set()); return; }
-                if (!window.confirm(`Delete ${picks.length} student${picks.length > 1 ? 's' : ''} from the student list? Their attendance history will remain but the ID cards will stop working.`)) return;
+                if (!(await confirmDialog({ message: `Delete ${picks.length} student${picks.length > 1 ? 's' : ''} from the student list? Their attendance history will remain but the ID cards will stop working.`, destructive: true }))) return;
                 await api.patchData({ students: data.students.filter(s => !selected.has(s.id)) });
                 setSelected(new Set());
                 void refresh();
@@ -94,7 +94,7 @@ export default function Students(): React.ReactElement {
                 const studs = data.students
                   .filter(s => s.sectionId === sectionFilter)
                   .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
-                if (!studs.length) { window.alert(`No students in ${sec?.name} yet.`); return; }
+                if (!studs.length) { void alertDialog(`No students in ${sec?.name} yet.`); return; }
                 printNodes(studs.map(s => {
                   const sc = data.sections.find(x => x.id === s.sectionId);
                   const sub = sc?.grade ? `${sc.grade} • ${sc.name.split(' • ')[1] || sc.name}` : sc?.name || 'Student';
@@ -182,7 +182,7 @@ export default function Students(): React.ReactElement {
                   <button
                     className="btn ghost small"
                     onClick={async () => {
-                      if (!window.confirm(`Delete ${s.firstName} ${s.lastName} from the student list? Their attendance history will remain but the ID card will stop working.`)) return;
+                      if (!(await confirmDialog({ message: `Delete ${s.firstName} ${s.lastName} from the student list? Their attendance history will remain but the ID card will stop working.`, destructive: true }))) return;
                       await api.patchData({ students: data.students.filter(x => x.id !== s.id) });
                       setSelected(prev => { const n = new Set(prev); n.delete(s.id); return n; });
                       void refresh();

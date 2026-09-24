@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Pill, Segmented, AvatarIcon, printNodes } from '../ui';
+import { Modal, Pill, Segmented, AvatarIcon, printNodes, confirmDialog } from '../ui';
 import { fmt12, timeToMin, ABSENCE_REASONS } from '../shared/constants';
 import { IdCard } from '../components/IdCard';
 import type { Teacher, Slot } from '../shared/types';
@@ -235,7 +235,7 @@ export default function Teachers(): React.ReactElement {
                   const msg = slotCount
                     ? `Delete ${picks.length} teacher${picks.length > 1 ? 's' : ''}? Their ${slotCount} class slot${slotCount > 1 ? 's' : ''} in the class program will also be removed.`
                     : `Delete ${picks.length} teacher${picks.length > 1 ? 's' : ''}?`;
-                  if (!window.confirm(msg)) return;
+                  if (!(await confirmDialog({ message: msg, destructive: true }))) return;
                   await api.patchData({
                     teachers: data.teachers.filter(t => !selected.has(t.id)),
                     slots: data.slots.filter(s => !selected.has(s.teacherId))
@@ -290,7 +290,7 @@ export default function Teachers(): React.ReactElement {
                     const msg = slotCount
                       ? `Remove ${t.firstName} ${t.lastName}? Their ${slotCount} class slot${slotCount > 1 ? 's' : ''} in the class program will also be removed.`
                       : `Remove ${t.firstName} ${t.lastName}?`;
-                    if (!window.confirm(msg)) return;
+                    if (!(await confirmDialog({ message: msg, destructive: true }))) return;
                     await api.patchData({
                       teachers: data.teachers.filter(x => x.id !== t.id),
                       slots: data.slots.filter(s => s.teacherId !== t.id)

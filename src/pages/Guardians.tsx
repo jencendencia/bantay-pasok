@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Segmented } from '../ui';
+import { Modal, Segmented, alertDialog } from '../ui';
 import { parseCsvTable } from './Sections';
 
 function csvGet(r: Record<string, string>, keys: string[]): string {
@@ -303,7 +303,7 @@ function ImportGuardiansModal({ onClose }: { onClose: () => void }): React.React
       }
     }
     await api.patchData({ guardians, students });
-    window.alert(`Imported ${preview.filter(r => r.name).length} guardians, linked ${linked} child${linked === 1 ? '' : 'ren'} by name.`);
+    await alertDialog(`Imported ${preview.filter(r => r.name).length} guardians, linked ${linked} child${linked === 1 ? '' : 'ren'} by name.`, 'Import complete');
     void refresh();
     onClose();
   };

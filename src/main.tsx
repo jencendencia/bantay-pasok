@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import ScannerApp from './scanner/ScannerApp';
 import { DataProvider } from './store';
+import { DialogHost } from './ui';
 import './styles.css';
 
 const hash = window.location.hash;
@@ -20,8 +21,14 @@ if (hash.startsWith('#/scanner')) {
   root.render(
     <DataProvider>
       <ScannerApp />
+      <DialogHost />
     </DataProvider>
   );
 } else {
-  root.render(<App />);
+  root.render(
+    <>
+      <App />
+      <DialogHost />
+    </>
+  );
 }

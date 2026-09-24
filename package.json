@@ -1,7 +1,7 @@
 {
   "name": "bantay-pasok",
   "productName": "Bantay Pasok",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Real-time teachers and students attendance monitoring with QR scanning and parent SMS",
   "main": "dist-electron/electron/main.js",
   "author": "Bantay Pasok",

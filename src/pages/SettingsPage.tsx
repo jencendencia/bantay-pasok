@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
 import type { DbConfigView } from '../api';
-import { Modal, Pill } from '../ui';
+import { Modal, Pill, confirmDialog } from '../ui';
 import { hashPassword } from '../shared/seed';
 import { monogramOf } from '../shared/constants';
 import type { Settings, User, UpdateStatusInfo } from '../shared/types';
@@ -242,8 +242,8 @@ export default function SettingsPage(): React.ReactElement {
                   {upd.state === 'downloaded' && (
                     <button
                       className="btn yellow small"
-                      onClick={() => {
-                        if (window.confirm(`Install version ${upd.downloadedVersion ?? upd.version ?? ''} now? The app will close and reopen.`)) void api.updateInstall();
+                      onClick={async () => {
+                        if (await confirmDialog({ message: `Install version ${upd.downloadedVersion ?? upd.version ?? ''} now? The app will close and reopen.`, confirmLabel: 'Install now' })) void api.updateInstall();
                       }}
                     >
                       Restart &amp; install v{upd.downloadedVersion ?? upd.version}
@@ -410,7 +410,7 @@ export default function SettingsPage(): React.ReactElement {
                     <td style={{ textAlign: 'right' }}>
                       {data.users.length > 1 && (
                         <button className="btn ghost small" onClick={async () => {
-                          if (!window.confirm(`Delete the account "${u.username}"?`)) return;
+                          if (!(await confirmDialog({ message: `Delete the account "${u.username}"?`, destructive: true }))) return;
                           setUsersDraft((usersDraft ?? data.users).filter(x => x.id !== u.id));
                           setDirty(true);
                         }}>🗑</button>
