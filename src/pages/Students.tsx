@@ -67,6 +67,7 @@ export default function Students(): React.ReactElement {
               className="btn danger small"
               onClick={async () => {
                 const picks = data.students.filter(s => selected.has(s.id));
+                if (picks.length === 0) { setSelected(new Set()); return; }
                 if (!window.confirm(`Delete ${picks.length} student${picks.length > 1 ? 's' : ''} from the student list? Their attendance history will remain but the ID cards will stop working.`)) return;
                 await api.patchData({ students: data.students.filter(s => !selected.has(s.id)) });
                 setSelected(new Set());

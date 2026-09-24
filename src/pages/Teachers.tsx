@@ -230,6 +230,7 @@ export default function Teachers(): React.ReactElement {
                 className="btn danger small"
                 onClick={async () => {
                   const picks = data.teachers.filter(t => selected.has(t.id));
+                  if (picks.length === 0) { setSelected(new Set()); return; }
                   const slotCount = data.slots.filter(s => picks.some(t => t.id === s.teacherId)).length;
                   const msg = slotCount
                     ? `Delete ${picks.length} teacher${picks.length > 1 ? 's' : ''}? Their ${slotCount} class slot${slotCount > 1 ? 's' : ''} in the class program will also be removed.`

@@ -3,7 +3,7 @@ import { useData } from '../store';
 import { api } from '../api';
 import { Modal, Pill } from '../ui';
 import { SUBJECTS, DEPARTMENTS, fmt12 } from '../shared/constants';
-import type { Slot } from '../shared/types';
+import type { AppData, Slot } from '../shared/types';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -81,6 +81,30 @@ function daysLabel(days: number[]): string {
   return ds.map(d => DAY_LABELS[d - 1]).join(', ');
 }
 
+/**
+ * Warns when a teacher is already booked at an overlapping time on a shared day.
+ * Pass excludeSlotId when checking an edited slot so it does not conflict with itself.
+ */
+function findTeacherConflict(
+  data: AppData,
+  opts: { sectionId: string; teacherId: string; start: string; end: string; days: number[]; excludeSlotId?: string }
+): string | null {
+  for (const s of data.slots) {
+    if (s.id === opts.excludeSlotId) continue; // the slot being edited is itself
+    if (s.teacherId !== opts.teacherId) continue;
+    if (!s.days.some(d => opts.days.includes(d))) continue;
+
+    const overlap = opts.start < s.end && s.start < opts.end;
+    if (overlap) {
+      const t = data.teachers.find(x => x.id === opts.teacherId);
+      const otherSec = data.sections.find(x => x.id === s.sectionId);
+      const dayNames = s.days.filter(d => opts.days.includes(d)).map(d => DAY_LABELS[d - 1]).join(', ');
+      return `${t?.firstName} ${t?.lastName} already teaches ${otherSec?.name} at ${fmt12(s.start)} on ${dayNames}. Choose another teacher or time.`;
+    }
+  }
+  return null;
+}
+
 /** Day-of-week toggle buttons (Mon–Fri) used by the add form and the edit modal. */
 function DayPicker({ value, onChange }: {
   value: number[];
@@ -139,20 +163,13 @@ export default function ClassProgram(): React.ReactElement {
     if (!sec) return null;
     const teacherAssignedId = form.teacherId || (data.teachers[0] ? data.teachers[0].id : '');
     if (!teacherAssignedId) return null;
-    for (const s of data.slots) {
-      if (s.sectionId === sec.id && s.start === form.start) continue; // editing or same slot
-      if (s.teacherId !== teacherAssignedId) continue;
-      if (!s.days.some(d => form.days.includes(d))) continue;
-
-      const overlap = form.start < s.end && s.start < form.end;
-      if (overlap) {
-        const t = data.teachers.find(x => x.id === teacherAssignedId);
-        const otherSec = data.sections.find(x => x.id === s.sectionId);
-        const dayNames = s.days.filter(d => form.days.includes(d)).map(d => DAY_LABELS[d - 1]).join(', ');
-        return `${t?.firstName} ${t?.lastName} already teaches ${otherSec?.name} at ${fmt12(s.start)} on ${dayNames}. Choose another teacher or time.`;
-      }
-    }
-    return null;
+    return findTeacherConflict(data, {
+      sectionId: sec.id,
+      teacherId: teacherAssignedId,
+      start: form.start,
+      end: form.end,
+      days: form.days
+    });
   }, [data, sectionId, form.teacherId, form.start, form.end, form.days]);
 
   if (!data) return <div className="empty">Loading…</div>;
@@ -511,6 +528,20 @@ function EditSlotModal({ slot, onClose }: { slot: Slot; onClose: () => void }): 
     end: slot.end,
     days: slot.days
   });
+  const [err, setErr] = useState<string | null>(null);
+  // Same double-booking warning as the Add form, ignoring the slot being edited.
+  // NOTE: must stay before any early return (rules of hooks).
+  const conflict = useMemo(() => {
+    if (!data) return null;
+    return findTeacherConflict(data, {
+      sectionId: slot.sectionId,
+      teacherId: form.teacherId,
+      start: form.start,
+      end: form.end,
+      days: form.days,
+      excludeSlotId: slot.id
+    });
+  }, [data, slot.sectionId, slot.id, form.teacherId, form.start, form.end, form.days]);
   if (!data) return <div />;
 
   return (
@@ -556,11 +587,21 @@ function EditSlotModal({ slot, onClose }: { slot: Slot; onClose: () => void }): 
           {data.teachers.map(t => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}
         </select>
       </div>
+      {conflict && (
+        <div className="notice" style={{ marginBottom: 12 }}>
+          <span>⚠</span>
+          <div>{conflict}</div>
+        </div>
+      )}
+      {err && <div className="notice error" style={{ marginBottom: 12 }}>⚠ {err}</div>}
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button
           className="btn primary"
           onClick={async () => {
+            setErr(null);
+            if (form.start >= form.end) { setErr('End time must be after start time'); return; }
+            if (form.days.length === 0) { setErr('Select at least one day — a slot with no days never appears in the schedule.'); return; }
             // Resolve the department name to an id, enrolling it on first use.
             const depName = form.departmentName.trim() || 'General';
             let departmentId = data.departments.find(d => d.name.toLowerCase() === depName.toLowerCase())?.id;
