@@ -55,6 +55,22 @@ export const DEFAULT_SETTINGS: Settings = {
   ]
 };
 
+/**
+ * The school runs exactly three terms (Term 1–3). Older builds saved a fourth;
+ * normalize on load so every install shows Terms 1–3 only.
+ */
+export function normalizeTerms(terms: unknown): Settings['terms'] {
+  if (!Array.isArray(terms) || terms.length === 0) return DEFAULT_SETTINGS.terms.map(t => ({ ...t }));
+  const raw = terms as Array<{ name?: unknown; start?: unknown; end?: unknown }>;
+  const out = raw.slice(0, 3).map((t, i) => ({
+    name: `Term ${i + 1}`,
+    start: typeof t?.start === 'string' ? t.start : DEFAULT_SETTINGS.terms[i]?.start ?? '',
+    end: typeof t?.end === 'string' ? t.end : DEFAULT_SETTINGS.terms[i]?.end ?? ''
+  }));
+  while (out.length < 3) out.push({ ...DEFAULT_SETTINGS.terms[out.length] });
+  return out;
+}
+
 /** Standard class periods per grade level — later grades start later (shared rooms). */
 export const GRADE_PERIODS: Record<string, { start: string; end: string }[]> = {
   'Grade 7': [

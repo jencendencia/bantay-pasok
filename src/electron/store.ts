@@ -2,7 +2,7 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildSeedData } from '../shared/seed';
-import { DEFAULT_SETTINGS } from '../shared/constants';
+import { DEFAULT_SETTINGS, normalizeTerms } from '../shared/constants';
 import type { AppData, Settings } from '../shared/types';
 import { DbConnection, ensureSchema, loadDbConfig, saveDbConfig } from './db';
 import type { DbConfig } from './db';
@@ -85,6 +85,9 @@ function repairData(d: AppData): boolean {
   if (s.smtpPass === undefined) { s.smtpPass = ''; changed = true; }
   if (s.emailFromName === undefined) { s.emailFromName = DEFAULT_SETTINGS.emailFromName; changed = true; }
   if (!Array.isArray(d.emails)) { d.emails = []; changed = true; }
+  // v1.0.3: terms are fixed to Term 1–3 (older builds saved a Term 4)
+  const fixedTerms = normalizeTerms(s.terms);
+  if (JSON.stringify(fixedTerms) !== JSON.stringify(s.terms)) { s.terms = fixedTerms; changed = true; }
   // v1.0.1: seed generator could hand the same QR to two students
   const seenStudents = new Set<string>();
   for (const s2 of d.students) {

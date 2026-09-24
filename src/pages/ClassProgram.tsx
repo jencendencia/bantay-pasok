@@ -74,6 +74,39 @@ function timeOptions(): string[] {
   return out;
 }
 
+/** "Mon, Wed, Fri" style label for a slot's days; falls back to "Mon – Fri". */
+function daysLabel(days: number[]): string {
+  const ds = [...days].filter(d => d >= 1 && d <= 5).sort((a, b) => a - b);
+  if (ds.length === 0 || ds.length === 5) return 'Mon – Fri';
+  return ds.map(d => DAY_LABELS[d - 1]).join(', ');
+}
+
+/** Day-of-week toggle buttons (Mon–Fri) used by the add form and the edit modal. */
+function DayPicker({ value, onChange }: {
+  value: number[];
+  onChange: (days: number[]) => void;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'flex', gap: 5 }}>
+      {DAY_LABELS.map((lbl, i) => {
+        const d = i + 1;
+        const on = value.includes(d);
+        return (
+          <button
+            key={lbl}
+            type="button"
+            className={`btn small ${on ? 'primary' : 'ghost'}`}
+            style={{ flex: 1, padding: '7px 0' }}
+            onClick={() => onChange(on ? value.filter(x => x !== d) : [...value, d])}
+          >
+            {lbl}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ClassProgram(): React.ReactElement {
   const { data, refresh } = useData();
   const [sectionId, setSectionId] = useState<string | null>(null);
@@ -189,26 +222,7 @@ export default function ClassProgram(): React.ReactElement {
 
           <div className="field">
             <label>Days</label>
-            <div style={{ display: 'flex', gap: 5 }}>
-              {DAY_LABELS.map((lbl, i) => {
-                const d = i + 1;
-                const on = form.days.includes(d);
-                return (
-                  <button
-                    key={lbl}
-                    type="button"
-                    className={`btn small ${on ? 'primary' : 'ghost'}`}
-                    style={{ flex: 1, padding: '7px 0' }}
-                    onClick={() => {
-                      const next = on ? form.days.filter(x => x !== d) : [...form.days, d];
-                      setForm({ ...form, days: next });
-                    }}
-                  >
-                    {lbl}
-                  </button>
-                );
-              })}
-            </div>
+            <DayPicker value={form.days} onChange={days => setForm({ ...form, days })} />
           </div>
 
           <div className="field">
@@ -348,18 +362,18 @@ export default function ClassProgram(): React.ReactElement {
                     <td><b>{s.subject}</b></td>
                     <td>{dep?.name ?? ''}</td>
                     <td>{t ? `${t.firstName} ${t.lastName}` : '—'}</td>
-                    <td style={{ fontSize: 13, color: '#3d5248' }}>Mon – Fri</td>
+                    <td style={{ fontSize: 13, color: '#3d5248' }}>{daysLabel(s.days)}</td>
                     <td>
                       <span className="pill green" style={{ fontSize: 11.5 }}>QR issued</span>
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button
                         className="btn ghost small"
-                        style={{ padding: '4px 8px' }}
+                        style={{ padding: '4px 8px', color: 'var(--green-900)', fontWeight: 700 }}
                         onClick={() => setEditingSlot(s)}
                         title="Edit slot"
                       >
-                        ✎
+                        ✎ Edit
                       </button>{' '}
                       <button
                         className="btn ghost small"
@@ -529,8 +543,15 @@ function EditSlotModal({ slot, onClose }: { slot: Slot; onClose: () => void }): 
           ))}
         </datalist>
       </div>
-      <div className="field">
-        <label>Teacher</label>
+          <div className="field">
+            <label>Days</label>
+            <DayPicker value={form.days} onChange={days => setForm({ ...form, days })} />
+            <div className="card-note" style={{ marginTop: 4 }}>
+              Tap a day to add or remove it from this slot's schedule.
+            </div>
+          </div>
+          <div className="field">
+            <label>Teacher</label>
         <select value={form.teacherId} onChange={e => setForm({ ...form, teacherId: e.target.value })}>
           {data.teachers.map(t => <option key={t.id} value={t.id}>{t.firstName} {t.lastName}</option>)}
         </select>

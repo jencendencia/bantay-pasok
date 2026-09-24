@@ -13,6 +13,7 @@ export default function Students(): React.ReactElement {
   const [filter, setFilter] = useState<'all' | 'M' | 'F'>('all');
   const [sectionFilter, setSectionFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [qrStudent, setQrStudent] = useState<Student | null>(null);
 
   if (!data) return <div className="empty">Loading…</div>;
@@ -61,6 +62,21 @@ export default function Students(): React.ReactElement {
             <button className={filter === 'M' ? 'active' : ''} onClick={() => setFilter('M')}>Male ({maleCount})</button>
             <button className={filter === 'F' ? 'active' : ''} onClick={() => setFilter('F')}>Female ({femaleCount})</button>
           </div>
+          {selected.size > 0 && (
+            <button
+              className="btn danger small"
+              onClick={async () => {
+                const picks = data.students.filter(s => selected.has(s.id));
+                if (!window.confirm(`Delete ${picks.length} student${picks.length > 1 ? 's' : ''} from the student list? Their attendance history will remain but the ID cards will stop working.`)) return;
+                await api.patchData({ students: data.students.filter(s => !selected.has(s.id)) });
+                setSelected(new Set());
+                void refresh();
+              }}
+              title="Delete every checked student"
+            >
+              🗑 Delete selected ({selected.size})
+            </button>
+          )}
           <select
             value={sectionFilter}
             onChange={e => setSectionFilter(e.target.value)}
@@ -106,6 +122,18 @@ export default function Students(): React.ReactElement {
         <table className="table">
           <thead>
             <tr>
+              <th style={{ width: 34 }}>
+                <input
+                  type="checkbox"
+                  checked={list.length > 0 && list.every(s => selected.has(s.id))}
+                  onChange={e => {
+                    const next = new Set(selected);
+                    for (const s of list) { if (e.target.checked) next.add(s.id); else next.delete(s.id); }
+                    setSelected(next);
+                  }}
+                  title="Select every student in the list"
+                />
+              </th>
               <th></th>
               <th>Name</th>
               <th>Sex</th>
@@ -118,6 +146,17 @@ export default function Students(): React.ReactElement {
           <tbody>
             {list.map(s => (
               <tr key={s.id}>
+                <td style={{ width: 34 }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(s.id)}
+                    onChange={e => {
+                      const next = new Set(selected);
+                      if (e.target.checked) next.add(s.id); else next.delete(s.id);
+                      setSelected(next);
+                    }}
+                  />
+                </td>
                 <td style={{ width: 52 }}><StudentFace student={s} size={40} /></td>
                 <td><b>{s.lastName}, {s.firstName}</b></td>
                 <td><Pill color={s.sex === 'M' ? 'blue' : 'purple'}>{s.sex === 'M' ? 'Male' : 'Female'}</Pill></td>
@@ -144,6 +183,7 @@ export default function Students(): React.ReactElement {
                     onClick={async () => {
                       if (!window.confirm(`Delete ${s.firstName} ${s.lastName} from the student list? Their attendance history will remain but the ID card will stop working.`)) return;
                       await api.patchData({ students: data.students.filter(x => x.id !== s.id) });
+                      setSelected(prev => { const n = new Set(prev); n.delete(s.id); return n; });
                       void refresh();
                     }}
                     title="Delete student"
@@ -154,7 +194,7 @@ export default function Students(): React.ReactElement {
               </tr>
             ))}
             {list.length === 0 && (
-              <tr><td colSpan={7} className="empty">No students found matching filters</td></tr>
+              <tr><td colSpan={8} className="empty">No students found matching filters</td></tr>
             )}
           </tbody>
         </table>

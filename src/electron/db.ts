@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Database as SqliteDatabase } from 'better-sqlite3';
-import { DEFAULT_SETTINGS } from '../shared/constants';
+import { DEFAULT_SETTINGS, normalizeTerms } from '../shared/constants';
 import type { AppData } from '../shared/types';
 
 export interface DbConfig {
@@ -237,7 +237,9 @@ export class DbConnection {
         try { value = JSON.parse(value); } catch { /* keep raw */ }
       }
       if (row.key === 'settings' && value && typeof value === 'object') {
-        d.settings = { ...DEFAULT_SETTINGS, ...(value as object) };
+        const s = { ...DEFAULT_SETTINGS, ...(value as object) };
+        s.terms = normalizeTerms(s.terms);
+        d.settings = s;
       } else {
         d[row.key] = value;
       }

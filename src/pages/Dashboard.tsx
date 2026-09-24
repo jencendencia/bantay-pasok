@@ -92,8 +92,8 @@ export default function Dashboard(): React.ReactElement {
     return '· on time';
   }
 
-  const slotCell = (slot: Slot | undefined, period: { start: string; end: string }) => {
-    if (!slot) return <div key={period.start + 'empty'} className="slot no-scan" />;
+  const slotCell = (slot: Slot | undefined, period: { start: string; end: string }, secId: string) => {
+    if (!slot) return <div key={secId + period.start + 'empty'} className="slot no-scan" />;
     const ev = data.classEvents.find(e => e.slotId === slot.id && e.date === dateStr);
     const st = data.slotStatuses.find(x => x.id === `${slot.id}|${dateStr}`);
     const teacher = data.teachers.find(t => t.id === slot.teacherId);
@@ -278,7 +278,7 @@ export default function Dashboard(): React.ReactElement {
                   </div>
                   {data.sections.map(sec => {
                     const slot = todaysSlots.find(s => s.sectionId === sec.id && s.start === p.start);
-                    return slotCell(slot, p);
+                    return slotCell(slot, p, sec.id);
                   })}
                   {BREAKS.filter(b => b.after === p.end).map(b => (
                     <div key={b.label} className="break-row">

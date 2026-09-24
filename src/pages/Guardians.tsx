@@ -15,6 +15,7 @@ export default function Guardians(): React.ReactElement {
   const [importing, setImporting] = useState(false);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'alpha' | 'section'>('alpha');
+  const [sectionFilter, setSectionFilter] = useState('all');
   if (!data) return <div className="empty">Loading…</div>;
 
   const sectionName = (id: string | null): string =>
@@ -37,8 +38,13 @@ export default function Guardians(): React.ReactElement {
     return `${a.g.lastName} ${a.g.firstName}`.localeCompare(`${b.g.lastName} ${b.g.firstName}`);
   });
 
+  // Section filter: show only guardians whose first child is in the chosen section.
+  const filteredBySection = sectionFilter === 'all'
+    ? sortedAll
+    : sortedAll.filter(({ kids }) => (kids[0]?.sectionId ?? 'none') === sectionFilter);
+
   const q = search.trim().toLowerCase();
-  const list = sortedAll
+  const list = filteredBySection
     .filter(({ g, kids }) =>
       !q ||
       `${g.firstName} ${g.lastName}`.toLowerCase().includes(q) ||
@@ -78,6 +84,18 @@ export default function Guardians(): React.ReactElement {
             value={sort}
             onChange={setSort}
           />
+          <select
+            value={sectionFilter}
+            onChange={e => setSectionFilter(e.target.value)}
+            style={{ padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)' }}
+            title="Show only guardians with a child in this section"
+          >
+            <option value="all">All sections</option>
+            {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {sortedAll.some(({ kids }) => !kids[0] || !kids[0].sectionId) && (
+              <option value="none">(No section)</option>
+            )}
+          </select>
           <input
             value={search}
             placeholder="Search guardian, child, number…"
@@ -106,7 +124,7 @@ export default function Guardians(): React.ReactElement {
               </tr>
             ))}
             {list.length === 0 && data.guardians.length > 0 && (
-              <tr><td colSpan={5} className="empty">No guardians match “{search.trim()}”</td></tr>
+              <tr><td colSpan={5} className="empty">No guardians match the current search or section filter</td></tr>
             )}
             {data.guardians.length === 0 && <tr><td colSpan={5} className="empty">No guardians yet</td></tr>}
           </tbody>

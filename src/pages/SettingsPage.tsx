@@ -41,10 +41,12 @@ export default function SettingsPage(): React.ReactElement {
       }
     })();
   }, []);
-  if (!data) return <div className="empty">Loading…</div>;
   // Edits stay in a local draft until "Save changes"; the effect re-syncs the draft whenever
   // saved data changes (initial load, or after a save round-trips through the store → SQLite).
-  React.useEffect(() => { setDraft(data.settings); }, [data.settings]);
+  // NOTE: must stay before any early return (rules of hooks) — deep-links load this page
+  // before data arrives, and an extra hook after the guard crashed the page.
+  React.useEffect(() => { if (data) setDraft(data.settings); }, [data?.settings]);
+  if (!data) return <div className="empty">Loading…</div>;
   const s = draft ?? data.settings;
 
   const setS = (patch: Partial<Settings>): void => {

@@ -1,6 +1,6 @@
 import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, UpdateEvent, UpdateStatusInfo } from './shared/types';
 import { buildSeedData } from './shared/seed';
-import { timeToMin, fmt12 } from './shared/constants';
+import { timeToMin, fmt12, normalizeTerms } from './shared/constants';
 
 export interface DbConfigView {
   enabled: boolean;
@@ -57,6 +57,7 @@ function createBrowserFallback(): BantayApi {
         const d = JSON.parse(raw) as AppData;
         // Defensive backfill for data written by older builds.
         if (!Array.isArray(d.emails)) d.emails = [];
+        d.settings.terms = normalizeTerms(d.settings.terms);
         return d;
       }
     } catch { /* ignore */ }

@@ -21,6 +21,7 @@ export default function Teachers(): React.ReactElement {
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Teacher | null>(null);
   const [qrTeacher, setQrTeacher] = useState<Teacher | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reasonSlot, setReasonSlot] = useState<{ slot: Slot; status: { reason: string; note: string } | null } | null>(null);
 
   if (!data) return <div className="empty">Loading…</div>;
@@ -222,12 +223,50 @@ export default function Teachers(): React.ReactElement {
         <div className="toolbar" style={{ marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>Teacher QR codes</h3>
           <div className="spacer" />
-          <span className="toolbar-label">Print official ID cards from here</span>
+          {selected.size > 0 ? (
+            <>
+              <span className="toolbar-label">{selected.size} selected</span>
+              <button
+                className="btn danger small"
+                onClick={async () => {
+                  const picks = data.teachers.filter(t => selected.has(t.id));
+                  const slotCount = data.slots.filter(s => picks.some(t => t.id === s.teacherId)).length;
+                  const msg = slotCount
+                    ? `Delete ${picks.length} teacher${picks.length > 1 ? 's' : ''}? Their ${slotCount} class slot${slotCount > 1 ? 's' : ''} in the class program will also be removed.`
+                    : `Delete ${picks.length} teacher${picks.length > 1 ? 's' : ''}?`;
+                  if (!window.confirm(msg)) return;
+                  await api.patchData({
+                    teachers: data.teachers.filter(t => !selected.has(t.id)),
+                    slots: data.slots.filter(s => !selected.has(s.teacherId))
+                  });
+                  setSelected(new Set());
+                  void refresh();
+                }}
+              >
+                🗑 Delete selected
+              </button>
+              <button className="btn ghost small" onClick={() => setSelected(new Set())}>Clear</button>
+            </>
+          ) : (
+            <span className="toolbar-label">Print official ID cards from here</span>
+          )}
         </div>
 
         <div className="qr-grid">
           {data.teachers.map(t => (
-            <div key={t.id} className="qr-card">
+            <div key={t.id} className="qr-card" style={{ position: 'relative' }}>
+              <label style={{ position: 'absolute', top: 8, right: 8, cursor: 'pointer', zIndex: 1 }} title="Select for deletion">
+                <input
+                  type="checkbox"
+                  checked={selected.has(t.id)}
+                  onChange={e => {
+                    const next = new Set(selected);
+                    if (e.target.checked) next.add(t.id); else next.delete(t.id);
+                    setSelected(next);
+                  }}
+                  onClick={e => e.stopPropagation()}
+                />
+              </label>
               <QrImg value={t.qr} size={110} />
               <div className="qc-name">{t.firstName} {t.lastName}</div>
               <div className="qc-sub">{data.departments.find(d => d.id === t.departmentId)?.name}</div>
@@ -255,6 +294,7 @@ export default function Teachers(): React.ReactElement {
                       teachers: data.teachers.filter(x => x.id !== t.id),
                       slots: data.slots.filter(s => s.teacherId !== t.id)
                     });
+                    setSelected(prev => { const n = new Set(prev); n.delete(t.id); return n; });
                     void refresh();
                   }}
                 >
