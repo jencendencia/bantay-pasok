@@ -1,10 +1,10 @@
 {
   "name": "bantay-pasok",
-  "productName": "Bantay Pasok",
-  "version": "1.0.5",
-  "description": "Real-time teachers and students attendance monitoring with QR scanning and parent SMS",
+  "productName": "Swiped Perfectly Just-in-time",
+  "version": "1.0.6",
+  "description": "Swiped Perfectly Just-in-time — real-time teachers and students attendance monitoring with QR scanning and parent SMS",
   "main": "dist-electron/electron/main.js",
-  "author": "Bantay Pasok",
+  "author": "Swiped Perfectly Just-in-time",
   "private": true,
   "scripts": {
     "dev": "vite",
@@ -20,7 +20,7 @@
   },
   "build": {
     "appId": "com.bantaypasok.attendance",
-    "productName": "Bantay Pasok",
+    "productName": "Swiped Perfectly Just-in-time",
     "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release",
@@ -56,8 +56,8 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
-      "shortcutName": "Bantay Pasok",
-      "artifactName": "BantayPasok.Setup.${version}.${ext}"
+      "shortcutName": "Swiped Perfectly Just-in-time",
+      "artifactName": "SwipedPerfectlyJustInTime.Setup.${version}.${ext}"
     }
   },
   "dependencies": {

@@ -162,6 +162,14 @@ export default function ClassProgram(): React.ReactElement {
   const [copyModalOpen, setCopyModalOpen] = useState(false);
   const [editingSlot, setEditingSlot] = useState<Slot | null>(null);
   const [depManageOpen, setDepManageOpen] = useState(false);
+  // Row highlight for the slot just added — CSS fades it out (styles.css .slot-added).
+  const [newSlotId, setNewSlotId] = useState<string | null>(null);
+  const newSlotTimer = React.useRef<number | null>(null);
+  React.useEffect(() => {
+    if (!newSlotId) return;
+    // Slots sort by start time, so the new row can land anywhere — bring it into view.
+    document.getElementById(`slot-row-${newSlotId}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [newSlotId]);
 
   // Form state on the left card (08_admin_class_program_tab.png)
   const [form, setForm] = useState<{
@@ -235,7 +243,19 @@ export default function ClassProgram(): React.ReactElement {
       days: form.days
     };
 
+    // Confirmation modal: show exactly what is about to be enrolled before saving.
+    const teacher = data.teachers.find(x => x.id === teacherAssignedId);
+    const conflictNote = conflict ? ' This slot is double-booked — the “Save anyway” override will apply.' : '';
+    if (!(await confirmDialog({
+      title: 'Add this class slot?',
+      confirmLabel: 'Add slot',
+      message: `Add ${newSlot.subject} for ${sec.name} on ${daysLabel(newSlot.days)}, ${fmt12(newSlot.start)} – ${fmt12(newSlot.end)}, taught by ${teacher ? `${teacher.firstName} ${teacher.lastName}` : 'Unassigned'}.${conflictNote}`
+    }))) return;
+
     await api.patchData({ departments, slots: [...data.slots, newSlot] });
+    if (newSlotTimer.current) window.clearTimeout(newSlotTimer.current);
+    setNewSlotId(newSlot.id);
+    newSlotTimer.current = window.setTimeout(() => setNewSlotId(null), 5000);
     void refresh();
   };
 
@@ -402,7 +422,7 @@ export default function ClassProgram(): React.ReactElement {
                 const t = data.teachers.find(x => x.id === s.teacherId);
                 const dep = data.departments.find(x => x.id === s.departmentId);
                 return (
-                  <tr key={s.id}>
+                  <tr key={s.id} id={`slot-row-${s.id}`} className={s.id === newSlotId ? 'slot-added' : ''}>
                     <td><b>P{i + 1}</b></td>
                     <td>{fmt12(s.start)} – {fmt12(s.end)}</td>
                     <td><b>{s.subject}</b></td>

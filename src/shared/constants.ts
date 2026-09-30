@@ -1,4 +1,4 @@
-import type { Settings } from './types';
+import type { Section, Settings, SlotTimeWindows } from './types';
 
 export const DEPARTMENTS = [
   { id: 'dep_math', name: 'Mathematics' },
@@ -47,13 +47,46 @@ export const DEFAULT_SETTINGS: Settings = {
   smtpSecure: true,
   smtpUser: '',
   smtpPass: '',
-  emailFromName: 'Bantay Pasok',
+  emailFromName: 'Swiped Perfectly Just-in-time',
   terms: [
     { name: 'Term 1', start: '2026-06-15', end: '2026-08-27' },
     { name: 'Term 2', start: '2026-09-16', end: '2026-12-02' },
     { name: 'Term 3', start: '2027-01-04', end: '2027-03-12' }
   ]
 };
+
+/**
+ * Global fallback windows, derived from the settings' arrival cutoffs:
+ * AM in = early cutoff, PM in = late after. Dismissal windows are offsets so
+ * the defaults land around 11:30 AM and 3:30 PM. Sections set their own
+ * AM/PM times on the Sections page when these do not fit them.
+ */
+export function globalWindows(s: Settings): SlotTimeWindows {
+  return {
+    amIn: s.earlyCutoff,
+    amOut: minToTime(timeToMin(s.earlyCutoff) + 270), // +4.5 h
+    pmIn: s.lateAfter,
+    pmOut: minToTime(timeToMin(s.lateAfter) + 480)    // +8 h
+  };
+}
+
+/** Fills any missing window field from the fallback. */
+export function resolveWindows(w: Partial<SlotTimeWindows> | undefined, fallback: SlotTimeWindows): SlotTimeWindows {
+  return {
+    amIn: w?.amIn ?? fallback.amIn,
+    amOut: w?.amOut ?? fallback.amOut,
+    pmIn: w?.pmIn ?? fallback.pmIn,
+    pmOut: w?.pmOut ?? fallback.pmOut
+  };
+}
+
+/**
+ * The scan windows for a section: its own AM in/out and PM in/out times when
+ * set on the Sections page, otherwise the global time rules from Settings.
+ */
+export function windowsForSection(sec: Section | undefined, s: Settings): SlotTimeWindows {
+  return resolveWindows(sec?.slotTimes, globalWindows(s));
+}
 
 /**
  * The school runs exactly three terms (Term 1–3). Older builds saved a fourth;
@@ -110,7 +143,7 @@ export function monogramOf(schoolName: string): string {
     .slice(0, 2)
     .map(w => w[0].toUpperCase())
     .join('');
-  return letters || 'BP';
+  return letters || 'SP';
 }
 
 export function timeToMin(t: string): number {

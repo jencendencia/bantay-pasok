@@ -1,4 +1,4 @@
-# Bantay Pasok — School Attendance Monitoring System
+# Swiped Perfectly Just-in-time — School Attendance Monitoring System
 
 An Electron desktop app that monitors student arrival/departure and teacher class attendance in real time via QR scanning, with automatic SMS notification to parents over a GSM modem.
 
@@ -13,8 +13,9 @@ An Electron desktop app that monitors student arrival/departure and teacher clas
 - **Parent email via Gmail**: guardians can store an email address; arrival/departure notices go out through SMTP (Gmail App Password) with the same retry queue. A Settings → Test connection button verifies credentials, and an Email log shows every message.
 - **Admin dashboard**: live class-program grid per section; each period lights **yellow** when the assigned teacher has scanned; clickable empty slots to record an absence reason (On leave / In a meeting / Unknown / Others); Holiday and Class Borrowed toggles (borrowed by G7–G10 or all sections).
 - **8 admin tabs**: Standby Screen, Class Program, Sections, Teachers, Reports, Students, Guardians, Settings.
-- **Class Program**: enrolment of section/time/subject/teacher with a **double-booking warning**.
-- **Sections**: roster + attendance reports by section and by time of arrival, sortable alphabetically or by arrival time, plus an **enroll-students modal** (un-enrolled students with checkboxes).
+- **Class Program**: enrolment of section/time/subject/teacher with a **double-booking warning**, an add-slot confirmation dialog, and a brief highlight on the newly added row.
+- **Sections**: roster + attendance reports by section and by time of arrival, sortable alphabetically or by arrival time, plus an **enroll-students modal** (un-enrolled students with checkboxes). A searchable dropdown handles long section lists, and each section can set its own **AM time in / AM time out / PM time in / PM time out** — sections without their own times follow the global time rules from Settings.
+- **Kiosk mode**: opening the scanner closes the admin panel; the kiosk's **⚙ Admin** button opens a login (accounts from Settings → Users) that brings the admin panel back.
 - **Teachers**: logs derived from class-program enrolments; late marks based on each slot's scheduled start; reports by section and department; alphabetical/arrival sorting.
 - **Reports**: styled, downloadable Excel workbooks (ExcelJS) — teacher attendance, individual teacher frequency (weekly/monthly/by term), student attendance, and student punctuality. Daily/weekly/monthly/term ranges. Excused leave is never counted as absent.
 - **Students / Guardians**: enrollment records (students by sex and number; guardians with name, number, email, address), a searchable multi-child picker in the Add Guardian modal, and printable **QR ID cards**.
@@ -70,7 +71,7 @@ npm run dist           # full build + NSIS installer
 npm run dist:dir       # unpacked folder only (faster, for quick testing)
 ```
 
-- Output: `release/BantayPasok-Setup-<version>.exe` — run it on the school computer and follow the wizard (choose the install folder, desktop shortcut is created).
+- Output: `release/SwipedPerfectlyJustInTime.Setup.<version>.exe` — run it on the school computer and follow the wizard (choose the install folder, desktop shortcut is created).
 - The app icon lives in `build/icon.png` (regenerate with `npm run icon`).
 - The GSM modem driver (`serialport`) is rebuilt for Electron automatically during packaging and unpacked from the asar at runtime.
 - User data (`data.json`, `sqlite.json`, `bantay-pasok.db`) lives in `%APPDATA%\Bantay Pasok\bantay-pasok-data\` — it survives app updates and uninstalling. Back that folder up when moving schools/PCs.
@@ -79,4 +80,4 @@ npm run dist:dir       # unpacked folder only (faster, for quick testing)
 ## Notes
 
 - All data is stored in a local SQLite database (`bantay-pasok-data/bantay-pasok.db` under the app's user-data folder) with `data.json` kept as an automatic backup (see above).
-- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (22 checks: seed integrity, scan flows, duplicate suppression, SMS queue, Excel reports, GSM retry). Storage: `npm run db:test` (SQLite sync round-trip).
+- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (25 checks: seed integrity, scan flows, per-section time rules, duplicate suppression, SMS queue, Excel reports, GSM retry). Storage: `npm run db:test` (SQLite sync round-trip).

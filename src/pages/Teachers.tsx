@@ -13,11 +13,20 @@ function minutesOfDay(ts: number): number {
   return dt.getHours() * 60 + dt.getMinutes();
 }
 
+/** Case-insensitive match on a teacher's name, either "First Last" or "Last, First" order. */
+function teacherMatches(t: Teacher, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return `${t.firstName} ${t.lastName}`.toLowerCase().includes(q)
+    || `${t.lastName} ${t.firstName}`.toLowerCase().includes(q);
+}
+
 export default function Teachers(): React.ReactElement {
   const { data, now, refresh } = useData();
   const [sort, setSort] = useState<SortKey>('arrival');
   const [secFilter, setSecFilter] = useState('all');
   const [depFilter, setDepFilter] = useState('all');
+  const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Teacher | null>(null);
   const [qrTeacher, setQrTeacher] = useState<Teacher | null>(null);
@@ -63,6 +72,7 @@ export default function Teachers(): React.ReactElement {
   for (const s of todaysSlots) {
     const t = data.teachers.find(x => x.id === s.teacherId);
     if (!t) continue;
+    if (!teacherMatches(t, query)) continue;
     if (secFilter !== 'all' && s.sectionId !== secFilter) continue;
     const dep = data.departments.find(x => x.id === t.departmentId);
     if (depFilter !== 'all' && t.departmentId !== depFilter) continue;
@@ -148,6 +158,12 @@ export default function Teachers(): React.ReactElement {
         <div className="toolbar" style={{ marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>Class attendance log</h3>
           <div className="spacer" />
+          <input
+            value={query}
+            placeholder="Search teacher…"
+            onChange={e => setQuery(e.target.value)}
+            style={{ padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)', width: 170 }}
+          />
           <span className="toolbar-label">Sort by</span>
           <Segmented
             options={[
@@ -222,6 +238,12 @@ export default function Teachers(): React.ReactElement {
       <div className="card" style={{ marginTop: 18 }}>
         <div className="toolbar" style={{ marginBottom: 12 }}>
           <h3 style={{ margin: 0 }}>Teacher QR codes</h3>
+          <input
+            value={query}
+            placeholder="Search teacher…"
+            onChange={e => setQuery(e.target.value)}
+            style={{ marginLeft: 14, padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)', width: 170 }}
+          />
           <div className="spacer" />
           {selected.size > 0 ? (
             <>
@@ -254,7 +276,7 @@ export default function Teachers(): React.ReactElement {
         </div>
 
         <div className="qr-grid">
-          {data.teachers.map(t => (
+          {data.teachers.filter(t => teacherMatches(t, query)).map(t => (
             <div key={t.id} className="qr-card" style={{ position: 'relative' }}>
               <label style={{ position: 'absolute', top: 8, right: 8, cursor: 'pointer', zIndex: 1 }} title="Select for deletion">
                 <input
@@ -311,6 +333,9 @@ export default function Teachers(): React.ReactElement {
               </button>
             </div>
           ))}
+          {data.teachers.length > 0 && data.teachers.every(t => !teacherMatches(t, query)) && (
+            <div className="empty">No teacher named “{query.trim()}”.</div>
+          )}
         </div>
       </div>
 

@@ -40,9 +40,9 @@ export class GsmModule {
   static parentBody(kind: 'arrival' | 'departure', name: string, time12: string, punctual?: string, school?: string): string {
     if (kind === 'arrival') {
       const suffix = punctual ? ` (${punctual})` : '';
-      return `Bantay Pasok: ${name} arrived at school at ${time12}${suffix}. - ${school || ''}`.trim();
+      return `Swiped Perfectly Just-in-time: ${name} arrived at school at ${time12}${suffix}. - ${school || ''}`.trim();
     }
-    return `Bantay Pasok: ${name} left school at ${time12}. - ${school || ''}`.trim();
+    return `Swiped Perfectly Just-in-time: ${name} left school at ${time12}. - ${school || ''}`.trim();
   }
 
   enqueue(d: AppData, msg: Omit<SmsMessage, 'id' | 'status' | 'attempts'>): void {

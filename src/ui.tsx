@@ -27,7 +27,7 @@ export function printNodes(nodes: React.ReactNode): void {
  * Frameless-window title bar with our own window controls.
  * Purely visual in a plain browser (buttons are hidden there).
  */
-export function TitleBar({ title, theme = 'light', target }: { title: string; theme?: 'light' | 'dark'; target?: 'admin' | 'scanner' }): React.ReactElement {
+export function TitleBar({ title, theme = 'light', target, controls = true }: { title: string; theme?: 'light' | 'dark'; target?: 'admin' | 'scanner'; controls?: boolean }): React.ReactElement {
   const [maximized, setMaximized] = useState(false);
   const [inElectron, setInElectron] = useState(false);
 
@@ -41,7 +41,7 @@ export function TitleBar({ title, theme = 'light', target }: { title: string; th
   return (
     <div className={cls} style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       <div className="titlebar-title">{title}</div>
-      {inElectron && (
+      {inElectron && controls && (
         <div className="titlebar-controls" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button className="tb-btn" title="Minimize" onClick={() => void api.winMinimize()}>
             <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" strokeWidth="1.2" /></svg>

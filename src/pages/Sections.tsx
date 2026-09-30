@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
 import { Modal, Pill, Segmented } from '../ui';
-import { fmt12, timeToMin, gradePeriodsFor } from '../shared/constants';
+import { fmt12, timeToMin, minToTime, gradePeriodsFor, windowsForSection } from '../shared/constants';
 import { StudentFace } from '../components/StudentFace';
-import type { Section, Student } from '../shared/types';
+import type { Section, SlotTimeWindows, Student } from '../shared/types';
 
 type SortKey = 'alpha' | 'arrival';
 type View = 'stats' | 'section';
@@ -83,6 +83,13 @@ export default function Sections(): React.ReactElement {
     return out;
   }, [data, now]);
 
+  // Student count per section — built once so the picker stays fast with hundreds of sections.
+  const countsById = useMemo(() => {
+    const m = new Map<string, number>();
+    if (data) for (const s of data.students) if (s.sectionId) m.set(s.sectionId, (m.get(s.sectionId) ?? 0) + 1);
+    return m;
+  }, [data?.students]);
+
   if (!data) return <div className="empty">Loading…</div>;
   const sec = data.sections.find(x => x.id === sectionId) ?? data.sections[1] ?? data.sections[0];
   const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -90,7 +97,8 @@ export default function Sections(): React.ReactElement {
   const bySection = data.sections.map(x => {
     const studs = data.students.filter(s => s.sectionId === x.id);
     let present = 0, early = 0, onTime = 0, late = 0, absent = 0;
-    const earlyC = timeToMin(data.settings.earlyCutoff), lateC = timeToMin(data.settings.lateAfter);
+    const w = windowsForSection(x, data.settings);
+    const earlyC = timeToMin(w.amIn), lateC = timeToMin(w.pmIn);
     for (const st of studs) {
       const inEv = data.attendance.find(e => e.studentId === st.id && e.date === dateStr && e.kind === 'in');
       if (!inEv) { absent++; continue; }
@@ -162,7 +170,8 @@ export default function Sections(): React.ReactElement {
     const inEv = data.attendance.find(e => e.studentId === st.id && e.date === dateStr && e.kind === 'in');
     if (!inEv) return <Pill color="red">Absent</Pill>;
     const m = minutesOfDay(inEv.ts);
-    const earlyC = timeToMin(data.settings.earlyCutoff), lateC = timeToMin(data.settings.lateAfter);
+    const w = windowsForSection(data.sections.find(x => x.id === st.sectionId), data.settings);
+    const earlyC = timeToMin(w.amIn), lateC = timeToMin(w.pmIn);
     if (m < earlyC) return <Pill color="blue">Early</Pill>;
     if (m <= lateC) return <Pill color="green">On time</Pill>;
     return <Pill color="orange">Late</Pill>;
@@ -213,7 +222,8 @@ export default function Sections(): React.ReactElement {
         const inEv = data.attendance.find(e => e.studentId === st.id && e.date === dateStr && e.kind === 'in');
         const outEv = data.attendance.find(e => e.studentId === st.id && e.date === dateStr && e.kind === 'out');
         const m = inEv ? minutesOfDay(inEv.ts) : 0;
-        const status = !inEv ? 'Absent' : m < timeToMin(data.settings.earlyCutoff) ? 'Early' : m <= timeToMin(data.settings.lateAfter) ? 'On time' : 'Late';
+        const w = windowsForSection(data.sections.find(x => x.id === st.sectionId), data.settings);
+        const status = !inEv ? 'Absent' : m < timeToMin(w.amIn) ? 'Early' : m <= timeToMin(w.pmIn) ? 'On time' : 'Late';
         return [
           st.sex === 'M' ? 'Male' : 'Female',
           st.lastName,
@@ -244,20 +254,16 @@ export default function Sections(): React.ReactElement {
         </div>
       </div>
 
-      {/* Section switcher: jump straight into a section's students, schedule and attendance */}
+      {/* Section switcher: searchable dropdown so long section lists stay usable */}
       <div className="card" style={{ padding: '12px 16px', marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span className="toolbar-label" style={{ marginRight: 2 }}>Section</span>
-          {data.sections.map(s => (
-            <button
-              key={s.id}
-              className={`btn small ${s.id === sec.id && view === 'section' ? 'primary' : 'ghost'}`}
-              onClick={() => switchSection(s.id)}
-            >
-              {s.name}
-              <span style={{ opacity: 0.65, fontWeight: 500 }}> · {data.students.filter(x => x.sectionId === s.id).length}</span>
-            </button>
-          ))}
+          <SectionPicker
+            sections={data.sections}
+            selectedId={sec.id}
+            countsById={countsById}
+            onSelect={switchSection}
+          />
           <div className="spacer" />
           <button
             className={`btn small ${view === 'stats' ? 'primary' : 'ghost'}`}
@@ -330,6 +336,10 @@ export default function Sections(): React.ReactElement {
           </div>
         </div>
       )}
+
+      {/* Per-section time rules: AM/PM in/out; blank = follow the global rules from Settings.
+          Keyed by section so the editor's draft never leaks from one section to the next. */}
+      <TimeRulesCard key={sec.id} section={sec} />
 
       {/* Top Grid: Enrol Card & Attendance Statistics (09_admin_sections_tab.png) */}
       <div className="grid-1-2" style={view === 'section' ? { display: 'block' } : undefined}>
@@ -795,5 +805,177 @@ function ImportMasterlistModal({ section, onClose }: { section: Section; onClose
         </button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Per-section time rules: AM time in / AM time out / PM time in / PM time out.
+ * A section that sets its own times uses them for scan classification (early /
+ * on time / late and the dismissal windows); blank fields follow the global
+ * time rules on the Settings page.
+ */
+function TimeRulesCard({ section }: { section: Section }): React.ReactElement {
+  const { data, refresh } = useData();
+  const [draft, setDraft] = useState<Partial<SlotTimeWindows>>(section.slotTimes ?? {});
+  const [savedFlash, setSavedFlash] = useState(false);
+  if (!data) return <div />;
+
+  const w = windowsForSection(section, data.settings);
+  const rows: Array<{ key: keyof SlotTimeWindows; label: string; hint: string }> = [
+    { key: 'amIn', label: 'AM time in', hint: 'Scans before this are “early”; after the PM time in they are “late”' },
+    { key: 'amOut', label: 'AM time out', hint: 'Morning departure window opens at this time' },
+    { key: 'pmIn', label: 'PM time in', hint: 'Scans after this count as late for this section' },
+    { key: 'pmOut', label: 'PM time out', hint: 'Afternoon departure window opens at this time' }
+  ];
+
+  const save = async (next: Partial<SlotTimeWindows>): Promise<void> => {
+    const clean = Object.fromEntries(Object.entries(next).filter(([, v]) => !!v)) as Partial<SlotTimeWindows>;
+    const isEmpty = Object.keys(clean).length === 0;
+    const sections = data.sections.map(x => {
+      if (x.id !== section.id) return x;
+      const { slotTimes, ...rest } = x;
+      return isEmpty ? rest : { ...rest, slotTimes: clean };
+    });
+    await api.patchData({ sections });
+    setDraft(clean);
+    void refresh();
+    setSavedFlash(true);
+    window.setTimeout(() => setSavedFlash(false), 2600);
+  };
+
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6 }}>
+        <h3 style={{ margin: 0 }}>Time rules — {section.name}</h3>
+        <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          Leave a time empty to follow the global rules from Settings.
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12, marginTop: 12 }}>
+        {rows.map(r => (
+          <div className="field" key={r.key} style={{ margin: 0 }}>
+            <label>{r.label}</label>
+            <input
+              type="time"
+              value={draft[r.key] ?? ''}
+              placeholder={fmt12(w[r.key])}
+              onChange={e => {
+                const next = { ...draft, [r.key]: e.target.value || undefined };
+                setDraft(next);
+                void save(next);
+              }}
+            />
+            <div className="card-note">
+              {draft[r.key] ? `This section: ${fmt12(draft[r.key]!)}` : `Global: ${fmt12(w[r.key])}`}
+              {' · '}{r.hint}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="card-note" style={{ marginTop: 10 }}>
+        Changes save immediately for <b>{section.name}</b> only — other sections keep the global rules.
+        {' '}{savedFlash && <span style={{ color: 'var(--green-700)', fontWeight: 700 }}>✓ Saved</span>}
+        {' '}Dismissal scans count between the time-out windows; {minToTime(timeToMin(w.amOut) + 90)}–{minToTime(timeToMin(w.pmIn))} scans keep the student checked in.
+      </div>
+    </div>
+  );
+}
+
+const PICKER_VISIBLE = 60; // options rendered at once — keeps the dropdown fast with hundreds of sections
+
+/**
+ * Searchable section dropdown: type to filter, ↑/↓ + Enter or click to choose.
+ * Works for hundreds of sections — filtering is plain string search and only
+ * the first PICKER_VISIBLE matches are rendered.
+ */
+function SectionPicker({ sections, selectedId, countsById, onSelect }: {
+  sections: Section[];
+  selectedId: string;
+  countsById: Map<string, number>;
+  onSelect: (id: string) => void;
+}): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const selected = sections.find(s => s.id === selectedId);
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sections
+      .filter(s => !q || s.name.toLowerCase().includes(q) || s.grade.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [sections, query]);
+  const visible = matches.slice(0, PICKER_VISIBLE);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent): void => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  const choose = (id: string): void => {
+    onSelect(id);
+    setQuery('');
+    setOpen(false);
+  };
+
+  return (
+    <div ref={boxRef} style={{ position: 'relative', minWidth: 240 }}>
+      <button
+        className="btn ghost"
+        style={{ width: '100%', justifyContent: 'space-between', display: 'flex', gap: 8 }}
+        onClick={() => { setOpen(o => !o); setQuery(''); setActive(0); }}
+        title="Search sections"
+      >
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected ? selected.name : 'All sections'}
+        </span>
+        <span style={{ opacity: 0.6 }}>▾</span>
+      </button>
+      {open && (
+        <div className="popover-card" style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, minWidth: 280, zIndex: 30 }}>
+          <input
+            className="manual-search"
+            autoFocus
+            value={query}
+            placeholder="Type to search sections…"
+            onChange={e => { setQuery(e.target.value); setActive(0); }}
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setActive(a => Math.min(a + 1, visible.length - 1)); }
+              else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(a => Math.max(a - 1, 0)); }
+              else if (e.key === 'Enter') { e.preventDefault(); if (visible[active]) choose(visible[active].id); }
+              else if (e.key === 'Escape') setOpen(false);
+            }}
+          />
+          <div style={{ maxHeight: 300, overflowY: 'auto', marginTop: 6 }}>
+            {visible.map((s, i) => (
+              <button
+                key={s.id}
+                className={`popover-check ${i === active ? 'active' : ''}`}
+                style={{
+                  display: 'flex', width: '100%', textAlign: 'left', gap: 8,
+                  background: i === active ? 'var(--green-50)' : undefined
+                }}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => choose(s.id)}
+              >
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: 600 }}>{s.name}</span>
+                <span style={{ color: 'var(--muted)', fontSize: 12.5 }}>{countsById.get(s.id) ?? 0} students</span>
+              </button>
+            ))}
+            {visible.length === 0 && <div className="empty">No section named “{query.trim()}”.</div>}
+            {matches.length > PICKER_VISIBLE && (
+              <div className="card-note" style={{ marginTop: 6 }}>
+                Showing {PICKER_VISIBLE} of {matches.length} — keep typing to narrow down.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

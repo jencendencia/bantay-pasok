@@ -49,13 +49,13 @@ function Shell(): React.ReactElement {
 
   return (
     <div style={{ height: '100vh', position: 'relative', overflow: 'hidden' }}>
-      <TitleBar title={data ? data.settings.schoolName : 'Bantay Pasok'} theme="light" target="admin" />
+      <TitleBar title={data ? data.settings.schoolName : 'Swiped Perfectly Just-in-time'} theme="light" target="admin" />
       <div className="app">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-badge">✓</div>
           <div>
-            <div className="brand-title">Bantay<br />Pasok</div>
+            <div className="brand-title" style={{ fontSize: 17 }}>Swiped<br />Perfectly<br />Just-in-time</div>
             <div className="brand-sub">Attendance and class monitor</div>
           </div>
         </div>

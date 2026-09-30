@@ -1,5 +1,5 @@
-import type { AppData, ScanResult, Slot, Student, Teacher } from '../shared/types';
-import { timeToMin, fmt12 } from '../shared/constants';
+import type { AppData, ScanResult, Slot, Student, SlotTimeWindows, Teacher } from '../shared/types';
+import { timeToMin, fmt12, windowsForSection } from '../shared/constants';
 import { todayStr } from './timeutil';
 
 export function isSchoolDay(d: AppData, date: string): boolean {
@@ -29,6 +29,13 @@ export function fmtTime12(ts: number): string {
 
 export type StudentStatus = 'early' | 'on_time' | 'late' | 'absent' | 'left';
 
+/** The AM/PM scan windows for a student: their section's times, or the global rules. */
+export function studentWindows(d: AppData, studentId: string): SlotTimeWindows {
+  const st = d.students.find(s => s.id === studentId);
+  const sec = st ? d.sections.find(x => x.id === st.sectionId) : undefined;
+  return windowsForSection(sec, d.settings);
+}
+
 export function studentStatusForDate(d: AppData, studentId: string, date: string): {
   status: StudentStatus; arrivalTs?: number; departureTs?: number;
 } {
@@ -37,8 +44,9 @@ export function studentStatusForDate(d: AppData, studentId: string, date: string
   const outEv = evs.filter(e => e.kind === 'out').sort((a, b) => b.ts - a.ts)[0];
   if (!inEv) return { status: 'absent' };
   const mins = minutesOfDay(inEv.ts);
-  const early = timeToMin(d.settings.earlyCutoff);
-  const late = timeToMin(d.settings.lateAfter);
+  const w = studentWindows(d, studentId);
+  const early = timeToMin(w.amIn);
+  const late = timeToMin(w.pmIn);
   const arrived: 'early' | 'on_time' | 'late' = mins < early ? 'early' : mins <= late ? 'on_time' : 'late';
   return { status: outEv ? 'left' : arrived, arrivalTs: inEv.ts, departureTs: outEv?.ts };
 }
@@ -107,6 +115,21 @@ export function processScan(d: AppData, raw: string, nowMs?: number): ScanResult
   return studentScan(d, student as Student, now, date);
 }
 
+/** Which kind of scan this is for a student who already checked in: departure or duplicate. */
+function nextStudentScanKind(d: AppData, student: Student, now: number, date: string): 'out' | 'duplicate' {
+  const evs = d.attendance.filter(e => e.studentId === student.id && e.date === date);
+  const hasOut = evs.some(e => e.kind === 'out');
+  if (hasOut) return 'duplicate';
+  // Departure only counts inside the grade's AM-out or PM-out windows.
+  const w = studentWindows(d, student.id);
+  const nowMin = minutesOfDay(now);
+  const amOut = timeToMin(w.amOut);
+  const pmOut = timeToMin(w.pmOut);
+  return nowMin >= amOut && nowMin < amOut + 90 ? 'out'
+    : nowMin >= pmOut ? 'out'
+    : 'duplicate';
+}
+
 function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): ScanResult {
   const dow = new Date(date + 'T00:00:00').getDay();
   const nowMin = minutesOfDay(now);
@@ -131,7 +154,8 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
       statusCategory: 'teacher',
       qr: teacher.qr,
       subDetail: dep ? `${dep.name} Department` : 'Faculty',
-      detail: 'Checked in to school'
+      detail: 'Checked in to school',
+      photoData: teacher.photoData
     };
   }
   // First scan for this slot wins; later scans within the slot are ignored as duplicates anyway.
@@ -145,22 +169,25 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
     statusCategory: 'teacher',
     qr: teacher.qr,
     subDetail: dep ? `${dep.name} Department` : 'Faculty',
-    detail: `Period ${pNum || 1} · ${sec ? sec.name.split(' - ')[0] : ''} · ${best.subject} · ${fmt12(best.start)}`
+    detail: `Period ${pNum || 1} · ${sec ? sec.name.split(' - ')[0] : ''} · ${best.subject} · ${fmt12(best.start)}`,
+    photoData: teacher.photoData
   };
 }
 
 function studentScan(d: AppData, student: Student, now: number, date: string): ScanResult {
   const evs = d.attendance.filter(e => e.studentId === student.id && e.date === date);
   const hasIn = evs.some(e => e.kind === 'in');
-  const hasOut = evs.some(e => e.kind === 'out');
   const sec = d.sections.find(x => x.id === student.sectionId);
   const secName = sec ? sec.name.replace(' - ', ' • ') : 'Student';
 
   if (!hasIn) {
     d.attendance.push({ id: nextId('att'), studentId: student.id, date, ts: now, kind: 'in' });
     const mins = minutesOfDay(now);
-    const early = timeToMin(d.settings.earlyCutoff);
-    const late = timeToMin(d.settings.lateAfter);
+    // Per-grade windows: Swiped in before AM in, Perfectly on time until PM in,
+    // Just-in-time after that.
+    const w = studentWindows(d, student.id);
+    const early = timeToMin(w.amIn);
+    const late = timeToMin(w.pmIn);
     let msg: string;
     let cat: 'early' | 'on_time' | 'late';
     if (mins < early) {
@@ -179,11 +206,12 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
       statusCategory: cat,
       qr: student.qr,
       subDetail: secName,
-      detail: 'Your parent has been notified by text message'
+      detail: 'Your parent has been notified by text message',
+      photoData: student.photoData
     };
   }
 
-  if (!hasOut) {
+  if (nextStudentScanKind(d, student, now, date) === 'out') {
     d.attendance.push({ id: nextId('att'), studentId: student.id, date, ts: now, kind: 'out' });
     return {
       ok: true, kind: 'student_out', personId: student.id, name: personName(student),
@@ -191,7 +219,8 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
       statusCategory: 'departure',
       qr: student.qr,
       subDetail: secName,
-      detail: 'Your parent has been notified that you left school'
+      detail: 'Your parent has been notified that you left school',
+      photoData: student.photoData
     };
   }
 
@@ -203,7 +232,8 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     message: `Done for today, ${student.firstName}. See you tomorrow!`,
     statusCategory: 'error',
     qr: student.qr,
-    subDetail: secName
+    subDetail: secName,
+    photoData: student.photoData
   };
 }
 

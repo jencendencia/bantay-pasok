@@ -3,6 +3,8 @@ import type { Announcement, AppData, IpcResult, ReportParams, ScanResult, Update
 
 const api = {
   getData: (): Promise<IpcResult<AppData>> => ipcRenderer.invoke('data:get'),
+  login: (username: string, password: string): Promise<IpcResult<{ role: 'admin' | 'teacher' }>> =>
+    ipcRenderer.invoke('auth:login', username, password),
   patchData: (patch: Partial<AppData>): Promise<IpcResult> => ipcRenderer.invoke('data:patch', patch),
   scan: (code: string): Promise<IpcResult<ScanResult>> => ipcRenderer.invoke('scan', code),
   setSlotReason: (slotId: string, date: string, reason: string | null, note: string): Promise<IpcResult> =>

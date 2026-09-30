@@ -1,6 +1,6 @@
-import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, UpdateEvent, UpdateStatusInfo } from './shared/types';
-import { buildSeedData } from './shared/seed';
-import { timeToMin, fmt12, normalizeTerms } from './shared/constants';
+import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, SlotTimeWindows, Student, UpdateEvent, UpdateStatusInfo } from './shared/types';
+import { buildSeedData, hashPassword } from './shared/seed';
+import { timeToMin, fmt12, normalizeTerms, windowsForSection } from './shared/constants';
 
 export interface DbConfigView {
   enabled: boolean;
@@ -9,6 +9,7 @@ export interface DbConfigView {
 
 export interface BantayApi {
   getData(): Promise<IpcResult<AppData>>;
+  login(username: string, password: string): Promise<IpcResult<{ role: 'admin' | 'teacher' }>>;
   patchData(patch: Partial<AppData>): Promise<IpcResult>;
   scan(code: string): Promise<IpcResult<ScanResult>>;
   setSlotReason(slotId: string, date: string, reason: string | null, note: string): Promise<IpcResult>;
@@ -71,9 +72,23 @@ function createBrowserFallback(): BantayApi {
     listeners.forEach(cb => cb(d));
   }
 
+  /** The AM/PM scan windows for a student (mirrors electron/attendance.ts). */
+  function windowsFor(d: AppData, st: Student): SlotTimeWindows {
+    const sec = d.sections.find(x => x.id === st.sectionId);
+    return windowsForSection(sec, d.settings);
+  }
+
   return {
     async getData() {
       return { ok: true, data: loadLocal() };
+    },
+    async login(username, password) {
+      const d = loadLocal();
+      const u = d.users.find(x => x.username.toLowerCase() === username.trim().toLowerCase());
+      if (!u || u.passwordHash !== hashPassword(password)) {
+        return { ok: false, error: 'Wrong username or password.' };
+      }
+      return { ok: true, data: { role: u.role } };
     },
     async patchData(patch: Partial<AppData>) {
       const d = loadLocal();
@@ -119,7 +134,8 @@ function createBrowserFallback(): BantayApi {
           statusCategory: 'teacher',
           qr: teacher.qr,
           subDetail: dep ? `${dep.name} Department` : 'Faculty',
-          detail: `Period 3 · ${sec ? sec.name.split(' - ')[0] : ''} · Filipino · 9:30 AM`
+          detail: `Period 3 · ${sec ? sec.name.split(' - ')[0] : ''} · Filipino · 9:30 AM`,
+          photoData: teacher.photoData
         };
         saveLocal(d);
         return { ok: true, data: res };
@@ -135,8 +151,10 @@ function createBrowserFallback(): BantayApi {
         d.attendance.push({ id: `att_${now}`, studentId: st.id, date: new Date(now).toISOString().slice(0, 10), ts: now, kind: 'in' });
         const dt = new Date(now);
         const mins = dt.getHours() * 60 + dt.getMinutes();
-        const earlyC = timeToMin(d.settings.earlyCutoff);
-        const lateC = timeToMin(d.settings.lateAfter);
+        // Per-grade windows: Swiped in before AM in, Perfectly on time until PM in.
+        const w = windowsFor(d, st);
+        const earlyC = timeToMin(w.amIn);
+        const lateC = timeToMin(w.pmIn);
         let msg = 'Just-in-time.\nHave an amazing day.';
         let cat: 'early' | 'on_time' | 'late' = 'late';
         if (mins < earlyC) { msg = 'Swiped in!\nHave an amazing day.'; cat = 'early'; }
@@ -182,10 +200,35 @@ function createBrowserFallback(): BantayApi {
           statusCategory: cat,
           qr: st.qr,
           subDetail: secName,
-          detail: 'Your parent has been notified by text message'
+          detail: 'Your parent has been notified by text message',
+          photoData: st.photoData
         };
         saveLocal(d);
         return { ok: true, data: res };
+      }
+
+      // Departure only records inside the grade's AM-out or PM-out window;
+      // otherwise the tap is treated as a duplicate (mirrors electron/attendance.ts).
+      const wOut = windowsFor(d, st);
+      const nowMin = new Date(now).getHours() * 60 + new Date(now).getMinutes();
+      const amOutM = timeToMin(wOut.amOut);
+      const pmOutM = timeToMin(wOut.pmOut);
+      const canLeave = (nowMin >= amOutM && nowMin < amOutM + 90) || nowMin >= pmOutM;
+      if (!canLeave) {
+        return {
+          ok: false,
+          data: {
+            ok: false,
+            kind: 'duplicate',
+            personId: st.id,
+            name: `${st.firstName} ${st.lastName}`,
+            message: `See you at dismissal, ${st.firstName}!`,
+            statusCategory: 'error',
+            qr: st.qr,
+            subDetail: secName,
+            photoData: st.photoData
+          }
+        };
       }
 
       // departure
@@ -227,7 +270,8 @@ function createBrowserFallback(): BantayApi {
         statusCategory: 'departure',
         qr: st.qr,
         subDetail: secName,
-        detail: 'Your parent has been notified that you left school'
+        detail: 'Your parent has been notified that you left school',
+        photoData: st.photoData
       };
       saveLocal(d);
       return { ok: true, data: res };

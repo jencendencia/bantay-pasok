@@ -35,8 +35,8 @@ export class EmailModule {
     const subject = `[${school || 'School'}] ${tag} notice - ${name}`;
     const punct = punctual ? ` Status: ${punctual}.` : '';
     const body = kind === 'arrival'
-      ? `Good day!\n\n${name} arrived at school at ${time12}.${punct}\n\n- Bantay Pasok Attendance Monitor${school ? `, ${school}` : ''}`
-      : `Good day!\n\n${name} left school at ${time12}. Thank you and safe travels.\n\n- Bantay Pasok Attendance Monitor${school ? `, ${school}` : ''}`;
+      ? `Good day!\n\n${name} arrived at school at ${time12}.${punct}\n\n- Swiped Perfectly Just-in-time Attendance Monitor${school ? `, ${school}` : ''}`
+      : `Good day!\n\n${name} left school at ${time12}. Thank you and safe travels.\n\n- Swiped Perfectly Just-in-time Attendance Monitor${school ? `, ${school}` : ''}`;
     return { subject, body };
   }
 

@@ -13,6 +13,8 @@ export interface Section {
   name: string;
   grade: string;
   color: string;
+  /** Per-section AM/PM scan windows; unset = follow the global time rules from Settings. */
+  slotTimes?: Partial<SlotTimeWindows>;
 }
 
 export interface Department {
@@ -240,6 +242,15 @@ export interface ScanResult {
   statusCategory?: 'early' | 'on_time' | 'late' | 'departure' | 'teacher' | 'error';
   qr?: string;
   subDetail?: string;
+  photoData?: string; // data URL of the person's picture; the scanner falls back to the cartoon avatar
+}
+
+/** Scan-session windows for one grade level: AM in/out and PM in/out. */
+export interface SlotTimeWindows {
+  amIn: string;  // arrivals before this are "Swiped in!" (early)
+  amOut: string; // morning departure window opens at this time
+  pmIn: string;  // arrivals after this are "Just-in-time" (late); between amOut and pmIn = "Perfectly on time!"
+  pmOut: string; // afternoon departure window opens at this time
 }
 
 export interface ReportParams {

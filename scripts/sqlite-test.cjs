@@ -83,11 +83,17 @@ try {
   seed.scans.push({ id: 'scan_test2', personId: seed.students[1].id, role: 'student', ts: Date.now(), kind: 'in' });
   seed.students[0].firstName = 'Renamed';
   seed.slots.pop();
+  // Per-section AM/PM time rules are an object column — must round-trip as JSON.
+  seed.sections[0].slotTimes = { amIn: '08:00', amOut: '11:45' };
   db.sync(seed);
   const back2 = db.loadAll();
   ok(back2.scans.some(s => s.id === 'scan_test2'), 'insert propagated');
   ok(back2.students[0].firstName === 'Renamed', 'update propagated');
   ok(back2.slots.length === seed.slots.length, 'delete propagated');
+  ok(
+    back2.sections[0].slotTimes && back2.sections[0].slotTimes.amIn === '08:00' && back2.sections[0].slotTimes.amOut === '11:45',
+    'section slotTimes JSON round-trip'
+  );
 
   // 6. Row mappers.
   const dbRow = rowToDb('slots', { ...seed.slots[0], days: [1, 2] });

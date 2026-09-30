@@ -21,7 +21,7 @@ export const COLLECTIONS = [
 export const KV_KEYS = ['settings', 'holiday', 'borrowed'] as const;
 
 // Columns stored as JSON text; parsed back into objects/arrays on read.
-const JSON_COLUMNS = new Set(['days', 'terms', 'holidayDates']);
+const JSON_COLUMNS = new Set(['days', 'terms', 'holidayDates', 'slotTimes']);
 
 // Collections whose rows carry a derived unique key column instead of plain id.
 const KEY_COLUMNS: Record<string, string> = {
@@ -35,6 +35,7 @@ const KEY_COLUMNS: Record<string, string> = {
 
 // Columns added after the first release; added to existing databases on connect.
 const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
+  { table: 'sections', column: 'slot_times', ddl: 'TEXT' },
   { table: 'announcements', column: 'video_data', ddl: 'TEXT' },
   { table: 'students', column: 'photo_data', ddl: 'TEXT' },
   { table: 'teachers', column: 'photo_data', ddl: 'TEXT' }
@@ -95,7 +96,7 @@ function columnExists(db: SqliteDatabase, table: string, column: string): boolea
 
 const TABLE_DDL: Record<string, string> = {
   users: '"id" TEXT PRIMARY KEY, "username" TEXT, "password_hash" TEXT, "role" TEXT, "display_name" TEXT',
-  sections: '"id" TEXT PRIMARY KEY, "name" TEXT, "grade" TEXT, "color" TEXT',
+  sections: '"id" TEXT PRIMARY KEY, "name" TEXT, "grade" TEXT, "color" TEXT, "slot_times" TEXT',
   departments: '"id" TEXT PRIMARY KEY, "name" TEXT',
   teachers: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "department_id" TEXT, "number" TEXT',
   guardians: '"id" TEXT PRIMARY KEY, "last_name" TEXT, "first_name" TEXT, "number" TEXT, "address" TEXT, "email" TEXT',

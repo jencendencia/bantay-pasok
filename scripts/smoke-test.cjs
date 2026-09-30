@@ -40,15 +40,30 @@ async function main() {
   const tAgain = processScan(d, teacher.qr);
   check('repeat scan within 60s ignored', !tAgain.ok && tAgain.kind === 'duplicate');
 
-  // 3. Student in + out + duplicate suppression
+  // 3. Student in + out + duplicate suppression (clock pinned: 10:00 arrival, 15:31 departure)
+  const at = (h, m) => { const dt = new Date(); dt.setHours(h, m, 0, 0); return dt.getTime(); };
   const student = d.students[0];
-  const sIn = processScan(d, student.qr);
+  const sIn = processScan(d, student.qr, at(10, 0));
   check('student arrival accepted', sIn.ok && sIn.kind === 'student_in');
   check('screen message friendly (never says late)', !/late/i.test(sIn.message));
-  const sAgain = processScan(d, student.qr, Date.now() + 61_000);
-  check('second scan (after 60s) records departure', sAgain.ok && sAgain.kind === 'student_out');
-  const sThird = processScan(d, student.qr, Date.now() + 62_000);
+  const sOutside = processScan(d, student.qr, at(10, 1));
+  check('mid-morning re-scan keeps student checked in', !sOutside.ok && sOutside.kind === 'duplicate');
+  const sAgain = processScan(d, student.qr, at(15, 31));
+  check('second scan in PM-out window records departure', sAgain.ok && sAgain.kind === 'student_out');
+  const sThird = processScan(d, student.qr, at(15, 32));
   check('third scan suppressed', !sThird.ok && sThird.kind === 'duplicate');
+
+  // 3b. Per-section time rules: a section with its own AM time in classifies
+  // scans by its own window; sections without overrides follow the global rules.
+  const secA = d.sections[0];
+  const secB = d.sections[1];
+  const studentA = d.students.find(s => s.sectionId === secA.id && !d.attendance.some(e => e.studentId === s.id));
+  const studentB = d.students.find(s => s.sectionId === secB.id && !d.attendance.some(e => e.studentId === s.id));
+  secA.slotTimes = { amIn: '08:00' }; // only AM in overridden; rest follows global rules
+  const scanA = processScan(d, studentA.qr, at(7, 30)); // 7:30 — late globally, early for secA
+  check('section with 8am AM-in accepts 7:30 scan as early', scanA.ok && scanA.kind === 'student_in' && scanA.statusCategory === 'early');
+  const scanB = processScan(d, studentB.qr, at(7, 30)); // global early cutoff is 7:00 → on_time
+  check('section without override follows global rules', scanB.ok && scanB.kind === 'student_in' && scanB.statusCategory === 'on_time');
 
   // 4. SMS enqueue + parent body
   const sms = {

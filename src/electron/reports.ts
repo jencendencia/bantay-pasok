@@ -61,7 +61,7 @@ function markFor(d: AppData, slotId: string, date: string, grace: number, slotSt
 
 export async function buildReport(d: AppData, p: ReportParams): Promise<{ buffer: Buffer; filename: string }> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Bantay Pasok';
+  wb.creator = 'Swiped Perfectly Just-in-time';
   wb.created = new Date();
 
   const grace = d.settings.graceMinutes;

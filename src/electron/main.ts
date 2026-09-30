@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import * as path from 'path';
+// Must run before ./store reads app.getPath('userData') — pins the data folder across renames.
+import './userData';
 import {
   loadData, patchData, saveData, flushSave, getDataDir,
   initStore, getDbConfig, applyDbConfig, connectSqlite, disconnectSqlite,
@@ -13,6 +15,7 @@ import { buildReport } from './reports';
 import { todayStr } from './timeutil';
 import type { Announcement, IpcResult, ReportParams, UpdateEvent } from '../shared/types';
 import type { DbConfig } from './db';
+import { hashPassword } from '../shared/seed';
 import { initUpdater, checkForUpdates, downloadUpdate, installUpdate, updateStatus, setGithubToken } from './updater';
 
 let adminWin: BrowserWindow | null = null;
@@ -31,7 +34,7 @@ function createAdminWindow(): void {
     show: false,
     frame: false,
     backgroundColor: '#e9efe9',
-    title: 'Bantay Pasok · Admin',
+    title: 'Swiped Perfectly Just-in-time · Admin',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -53,7 +56,7 @@ function createScannerWindow(): void {
     show: false,
     frame: false,
     backgroundColor: '#0e3a2f',
-    title: 'Bantay Pasok · Scanner',
+    title: 'Swiped Perfectly Just-in-time · Scanner',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -66,6 +69,15 @@ function createScannerWindow(): void {
   if (DEV_URL) void scanWin.loadURL(DEV_URL + hash);
   else void scanWin.loadFile(path.join(__dirname, '../../dist/index.html'), { hash });
   scanWin.on('closed', () => { scanWin = null; });
+  // Kiosk mode: the scanner replaces the admin window; it comes back via the
+  // kiosk's Admin button (auth:login).
+  if (adminWin && !adminWin.isDestroyed()) adminWin.close();
+}
+
+/** Shows (or recreates) the admin window — used at startup and after kiosk login. */
+function showAdminWindow(): void {
+  if (adminWin && !adminWin.isDestroyed()) { adminWin.show(); adminWin.focus(); return; }
+  createAdminWindow();
 }
 
 function broadcast(channel: string, payload: unknown): void {
@@ -105,6 +117,18 @@ function registerIpc(): void {
     return ok(true);
   });
   ipcMain.handle('data:get', (): IpcResult => ok(loadData()));
+
+  // Kiosk login: verifies against the user accounts managed in Settings → Users,
+  // then opens the admin panel (the scanner window stays open).
+  ipcMain.handle('auth:login', (_e, username: string, password: string): IpcResult => {
+    const d = loadData();
+    const u = d.users.find(x => x.username.toLowerCase() === String(username ?? '').trim().toLowerCase());
+    if (!u || u.passwordHash !== hashPassword(String(password ?? ''))) {
+      return fail(new Error('Wrong username or password.'));
+    }
+    showAdminWindow();
+    return ok({ role: u.role });
+  });
 
   ipcMain.handle('data:patch', (_e, patch: Partial<AppData>) => {
     try {

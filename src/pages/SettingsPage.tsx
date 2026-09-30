@@ -179,7 +179,7 @@ export default function SettingsPage(): React.ReactElement {
             </div>
             <div className="field">
               <label>From name (shown on outgoing mail)</label>
-              <input value={s.emailFromName} placeholder="Bantay Pasok" onChange={e => void setS({ emailFromName: e.target.value })} />
+              <input value={s.emailFromName} placeholder="Swiped Perfectly Just-in-time" onChange={e => void setS({ emailFromName: e.target.value })} />
             </div>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
               <button
