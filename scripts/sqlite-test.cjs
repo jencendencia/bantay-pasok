@@ -66,6 +66,7 @@ try {
   const back = db.loadAll();
   ok(back.students.length === seed.students.length, `students round-trip (${back.students.length})`);
   ok(back.teachers.length === seed.teachers.length, 'teachers round-trip');
+  ok(back.teachers.every(t => t.sex === 'M' || t.sex === 'F'), 'teacher sex round-trip');
   ok(Array.isArray(back.slots[0].days) && back.slots[0].days.length === 5, 'slots days JSON column');
   ok(back.settings.schoolName === seed.settings.schoolName, 'settings kv schoolName');
   ok(back.settings.smtpPort === seed.settings.smtpPort, 'settings kv smtpPort');
@@ -82,6 +83,7 @@ try {
   // 5. Mutations propagate (insert / update / delete).
   seed.scans.push({ id: 'scan_test2', personId: seed.students[1].id, role: 'student', ts: Date.now(), kind: 'in' });
   seed.students[0].firstName = 'Renamed';
+  seed.teachers[0].sex = 'M';
   seed.slots.pop();
   // Per-section AM/PM time rules are an object column — must round-trip as JSON.
   seed.sections[0].slotTimes = { amIn: '08:00', amOut: '11:45' };
@@ -89,6 +91,7 @@ try {
   const back2 = db.loadAll();
   ok(back2.scans.some(s => s.id === 'scan_test2'), 'insert propagated');
   ok(back2.students[0].firstName === 'Renamed', 'update propagated');
+  ok(back2.teachers[0].sex === 'M', 'teacher sex update propagated');
   ok(back2.slots.length === seed.slots.length, 'delete propagated');
   ok(
     back2.sections[0].slotTimes && back2.sections[0].slotTimes.amIn === '08:00' && back2.sections[0].slotTimes.amOut === '11:45',

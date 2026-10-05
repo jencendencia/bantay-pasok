@@ -173,7 +173,7 @@ export default function ScannerApp(): React.ReactElement {
                 ) : (
                   <AvatarIcon
                     role={activeScan.kind === 'teacher' ? 'teacher' : 'student'}
-                    sex={activeScan.name?.includes('Ma.') || activeScan.name?.includes('Maria') || activeScan.name?.includes('Sofia') || activeScan.name?.includes('Bea') ? 'F' : 'M'}
+                    sex={activeScan.sex ?? (activeScan.name?.includes('Ma.') || activeScan.name?.includes('Maria') || activeScan.name?.includes('Sofia') || activeScan.name?.includes('Bea') ? 'F' : 'M')}
                     size={150}
                   />
                 )}

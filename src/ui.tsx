@@ -213,7 +213,9 @@ export function AvatarIcon({
   size?: number;
 }): React.ReactElement {
   const isTeacher = role === 'teacher';
-  const isFemale = sex === 'F' || isTeacher;
+  // Draw the person's actual sex; call sites default legacy teachers (no sex on
+  // record) to 'F' so pre-v1.0.7 cards keep the classic look.
+  const isFemale = sex === 'F';
 
   return (
     <svg width={size} height={size} viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -28,6 +28,7 @@ export interface Teacher {
   lastName: string;
   firstName: string;
   middleName: string;
+  sex?: 'M' | 'F'; // optional so pre-v1.0.7 teachers (assumed female) keep loading
   departmentId: string;
   number?: string;
   photoData?: string; // data URL (teacher picture on the ID card); optional
@@ -243,6 +244,7 @@ export interface ScanResult {
   qr?: string;
   subDetail?: string;
   photoData?: string; // data URL of the person's picture; the scanner falls back to the cartoon avatar
+  sex?: 'M' | 'F';    // for the cartoon avatar fallback when there is no photo
 }
 
 /** Scan-session windows for one grade level: AM in/out and PM in/out. */

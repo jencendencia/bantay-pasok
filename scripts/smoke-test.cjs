@@ -30,6 +30,7 @@ async function main() {
   check('seed: users include admin', d.users.some(u => u.username === 'admin'));
   check('seed: student QRs unique', d.students.length === new Set(d.students.map(s => s.qr)).size);
   check('seed: teacher QRs unique', d.teachers.length === new Set(d.teachers.map(t => t.qr)).size);
+  check('seed: teachers have sex', d.teachers.every(t => t.sex === 'M' || t.sex === 'F'));
 
   // 2. Teacher scan flow
   const teacher = d.teachers[0];
@@ -37,6 +38,9 @@ async function main() {
   const tScan = processScan(d, teacher.qr);
   check('teacher scan accepted', tScan.ok && tScan.kind === 'teacher');
   check('teacher scan message', /Welcome, Ma'am\/Sir/.test(tScan.message));
+  check('teacher scan screen name is first name only', tScan.name === teacher.firstName && !tScan.name.includes(teacher.lastName));
+  check('teacher scan message uses first name only', !tScan.message.includes(teacher.lastName));
+  check('teacher scan result carries sex', tScan.sex === 'M' || tScan.sex === 'F');
   const tAgain = processScan(d, teacher.qr);
   check('repeat scan within 60s ignored', !tAgain.ok && tAgain.kind === 'duplicate');
 
@@ -45,6 +49,7 @@ async function main() {
   const student = d.students[0];
   const sIn = processScan(d, student.qr, at(10, 0));
   check('student arrival accepted', sIn.ok && sIn.kind === 'student_in');
+  check('student screen name is first name only', sIn.name === student.firstName);
   check('screen message friendly (never says late)', !/late/i.test(sIn.message));
   const sOutside = processScan(d, student.qr, at(10, 1));
   check('mid-morning re-scan keeps student checked in', !sOutside.ok && sOutside.kind === 'duplicate');

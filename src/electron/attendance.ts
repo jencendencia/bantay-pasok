@@ -84,9 +84,8 @@ function findStudentByQr(d: AppData, code: string): Student | undefined {
   return d.students.find(s => s.qr.toUpperCase() === code);
 }
 
-function personName(p: Teacher | Student): string {
-  return `${p.firstName} ${p.lastName}`;
-}
+// The scanner screen greets people by FIRST NAME ONLY (school kiosk style);
+// surnames stay on the admin side. ScanResult.name follows the same rule.
 
 /** Handles a QR scan. Returns display message plus side effects (records, SMS).
  *  nowMs overrides the clock (used by tests and seed demos). */
@@ -149,13 +148,14 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
   if (!best) {
     // Scan outside any nearby class period: log arrival only.
     return {
-      ok: true, kind: 'teacher', personId: teacher.id, name: personName(teacher),
-      message: `Welcome, Ma'am/Sir ${personName(teacher)}. Have a great class!`,
+      ok: true, kind: 'teacher', personId: teacher.id, name: teacher.firstName,
+      message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
       statusCategory: 'teacher',
       qr: teacher.qr,
       subDetail: dep ? `${dep.name} Department` : 'Faculty',
       detail: 'Checked in to school',
-      photoData: teacher.photoData
+      photoData: teacher.photoData,
+      sex: teacher.sex
     };
   }
   // First scan for this slot wins; later scans within the slot are ignored as duplicates anyway.
@@ -164,13 +164,14 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
   const allSecSlots = d.slots.filter(s => s.sectionId === best!.sectionId).sort((a, b) => a.start.localeCompare(b.start));
   const pNum = allSecSlots.findIndex(s => s.id === best!.id) + 1;
   return {
-    ok: true, kind: 'teacher', personId: teacher.id, name: personName(teacher),
-    message: `Welcome, Ma'am/Sir ${personName(teacher)}. Have a great class!`,
+    ok: true, kind: 'teacher', personId: teacher.id, name: teacher.firstName,
+    message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
     statusCategory: 'teacher',
     qr: teacher.qr,
     subDetail: dep ? `${dep.name} Department` : 'Faculty',
     detail: `Period ${pNum || 1} · ${sec ? sec.name.split(' - ')[0] : ''} · ${best.subject} · ${fmt12(best.start)}`,
-    photoData: teacher.photoData
+    photoData: teacher.photoData,
+    sex: teacher.sex
   };
 }
 
@@ -201,26 +202,28 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
       cat = 'late';
     }
     return {
-      ok: true, kind: 'student_in', personId: student.id, name: personName(student),
+      ok: true, kind: 'student_in', personId: student.id, name: student.firstName,
       message: msg,
       statusCategory: cat,
       qr: student.qr,
       subDetail: secName,
       detail: 'Your parent has been notified by text message',
-      photoData: student.photoData
+      photoData: student.photoData,
+      sex: student.sex
     };
   }
 
   if (nextStudentScanKind(d, student, now, date) === 'out') {
     d.attendance.push({ id: nextId('att'), studentId: student.id, date, ts: now, kind: 'out' });
     return {
-      ok: true, kind: 'student_out', personId: student.id, name: personName(student),
+      ok: true, kind: 'student_out', personId: student.id, name: student.firstName,
       message: 'See you tomorrow!\nTravel safe.',
       statusCategory: 'departure',
       qr: student.qr,
       subDetail: secName,
       detail: 'Your parent has been notified that you left school',
-      photoData: student.photoData
+      photoData: student.photoData,
+      sex: student.sex
     };
   }
 
@@ -228,12 +231,13 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     ok: false,
     kind: 'duplicate',
     personId: student.id,
-    name: personName(student),
+    name: student.firstName,
     message: `Done for today, ${student.firstName}. See you tomorrow!`,
     statusCategory: 'error',
     qr: student.qr,
     subDetail: secName,
-    photoData: student.photoData
+    photoData: student.photoData,
+    sex: student.sex
   };
 }
 

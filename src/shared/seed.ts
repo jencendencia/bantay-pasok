@@ -23,17 +23,17 @@ const SECTIONS = [
 ];
 
 const TEACHERS = [
-  { last: 'Santos', first: 'Ma. Luisa', dept: 'dep_filipino', code: 'T-0031' },
-  { last: 'Dela Cruz', first: 'Ronaldo', dept: 'dep_math', code: 'T-0032' },
-  { last: 'Bautista', first: 'Angelica', dept: 'dep_english', code: 'T-0033' },
-  { last: 'Mercado', first: 'Joel', dept: 'dep_science', code: 'T-0034' },
-  { last: 'Villanueva', first: 'Cristina', dept: 'dep_english', code: 'T-0035' },
-  { last: 'Aquino', first: 'Jocelyn', dept: 'dep_filipino', code: 'T-0036' },
-  { last: 'Pascual', first: 'Ernesto', dept: 'dep_ap', code: 'T-0037' },
-  { last: 'Salazar', first: 'Marvin', dept: 'dep_mapeh', code: 'T-0038' },
-  { last: 'Manalo', first: 'Liza', dept: 'dep_esp', code: 'T-0039' },
-  { last: 'Castillo', first: 'Rowena', dept: 'dep_tle', code: 'T-0040' }
-];
+  { last: 'Santos', first: 'Ma. Luisa', dept: 'dep_filipino', code: 'T-0031', sex: 'F' },
+  { last: 'Dela Cruz', first: 'Ronaldo', dept: 'dep_math', code: 'T-0032', sex: 'M' },
+  { last: 'Bautista', first: 'Angelica', dept: 'dep_english', code: 'T-0033', sex: 'F' },
+  { last: 'Mercado', first: 'Joel', dept: 'dep_science', code: 'T-0034', sex: 'M' },
+  { last: 'Villanueva', first: 'Cristina', dept: 'dep_english', code: 'T-0035', sex: 'F' },
+  { last: 'Aquino', first: 'Jocelyn', dept: 'dep_filipino', code: 'T-0036', sex: 'F' },
+  { last: 'Pascual', first: 'Ernesto', dept: 'dep_ap', code: 'T-0037', sex: 'M' },
+  { last: 'Salazar', first: 'Marvin', dept: 'dep_mapeh', code: 'T-0038', sex: 'M' },
+  { last: 'Manalo', first: 'Liza', dept: 'dep_esp', code: 'T-0039', sex: 'F' },
+  { last: 'Castillo', first: 'Rowena', dept: 'dep_tle', code: 'T-0040', sex: 'F' }
+] as const;
 
 const PERIODS = [
   { start: '07:30', end: '08:20' },
@@ -118,6 +118,7 @@ export function buildSeedData(): AppData {
     lastName: t.last,
     firstName: t.first,
     middleName: '',
+    sex: t.sex as 'M' | 'F',
     departmentId: t.dept
   }));
 

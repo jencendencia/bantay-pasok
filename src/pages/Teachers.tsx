@@ -379,6 +379,7 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
   const [form, setForm] = useState({
     lastName: existing?.lastName ?? '',
     firstName: existing?.firstName ?? '',
+    sex: existing?.sex ?? ('F' as 'M' | 'F'),
     departmentId: existing?.departmentId ?? data?.departments[0]?.id ?? ''
   });
   const [photo, setPhoto] = useState<string | null>(existing?.photoData ?? null);
@@ -424,7 +425,7 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
           >
             {photo
               ? <img src={photo} alt="Teacher" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : <AvatarIcon role="teacher" sex="F" size={110} />}
+              : <AvatarIcon role="teacher" sex={form.sex} size={110} />}
           </div>
           <input
             id="teacher-photo-input"
@@ -453,6 +454,25 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
             </div>
           </div>
           <div className="field">
+            <label>Sex</label>
+            <div className="segmented">
+              <button
+                type="button"
+                className={form.sex === 'M' ? 'active' : ''}
+                onClick={() => setForm({ ...form, sex: 'M' })}
+              >
+                Male
+              </button>
+              <button
+                type="button"
+                className={form.sex === 'F' ? 'active' : ''}
+                onClick={() => setForm({ ...form, sex: 'F' })}
+              >
+                Female
+              </button>
+            </div>
+          </div>
+          <div className="field">
             <label>Department</label>
             <select value={form.departmentId} onChange={e => setForm({ ...form, departmentId: e.target.value })}>
               {data.departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -476,6 +496,7 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
                 ...existing,
                 lastName: form.lastName,
                 firstName: form.firstName,
+                sex: form.sex,
                 departmentId: form.departmentId,
                 ...(photo ? { photoData: photo } : { photoData: undefined })
               };
@@ -487,6 +508,7 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
                 lastName: form.lastName,
                 firstName: form.firstName,
                 middleName: '',
+                sex: form.sex,
                 departmentId: form.departmentId,
                 ...(photo ? { photoData: photo } : {})
               };
@@ -518,7 +540,7 @@ function PrintTeacherIdModal({ teacher, onClose }: { teacher: Teacher; onClose: 
           subLabel="Faculty and staff"
           name={`${teacher.firstName} ${teacher.lastName}`}
           sub={dep?.name ? `${dep.name} Department` : 'Faculty Member'}
-          sex="F"
+          sex={teacher.sex ?? 'F'}
           qr={teacher.qr}
           photoData={teacher.photoData}
         />
@@ -533,7 +555,7 @@ function PrintTeacherIdModal({ teacher, onClose }: { teacher: Teacher; onClose: 
             subLabel="Faculty and staff"
             name={`${teacher.firstName} ${teacher.lastName}`}
             sub={dep?.name ? `${dep.name} Department` : 'Faculty Member'}
-            sex="F"
+            sex={teacher.sex ?? 'F'}
             qr={teacher.qr}
           />
         )}>

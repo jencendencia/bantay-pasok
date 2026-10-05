@@ -114,7 +114,7 @@ function createBrowserFallback(): BantayApi {
           data: {
             ok: false,
             kind: 'duplicate',
-            name: `${p.firstName} ${p.lastName}`,
+            name: p.firstName,
             message: `Already scanned, ${p.firstName}. Please wait a moment.`,
             statusCategory: 'error'
           }
@@ -129,13 +129,14 @@ function createBrowserFallback(): BantayApi {
           ok: true,
           kind: 'teacher',
           personId: teacher.id,
-          name: `${teacher.firstName} ${teacher.lastName}`,
-          message: `Welcome, Ma'am/Sir ${teacher.firstName} ${teacher.lastName}. Have a great class!`,
+          name: teacher.firstName,
+          message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
           statusCategory: 'teacher',
           qr: teacher.qr,
           subDetail: dep ? `${dep.name} Department` : 'Faculty',
           detail: `Period 3 · ${sec ? sec.name.split(' - ')[0] : ''} · Filipino · 9:30 AM`,
-          photoData: teacher.photoData
+          photoData: teacher.photoData,
+          sex: teacher.sex
         };
         saveLocal(d);
         return { ok: true, data: res };
@@ -195,13 +196,14 @@ function createBrowserFallback(): BantayApi {
           ok: true,
           kind: 'student_in',
           personId: st.id,
-          name: `${st.firstName} ${st.lastName}`,
+          name: st.firstName,
           message: msg,
           statusCategory: cat,
           qr: st.qr,
           subDetail: secName,
           detail: 'Your parent has been notified by text message',
-          photoData: st.photoData
+          photoData: st.photoData,
+          sex: st.sex
         };
         saveLocal(d);
         return { ok: true, data: res };
@@ -221,12 +223,13 @@ function createBrowserFallback(): BantayApi {
             ok: false,
             kind: 'duplicate',
             personId: st.id,
-            name: `${st.firstName} ${st.lastName}`,
+            name: st.firstName,
             message: `See you at dismissal, ${st.firstName}!`,
             statusCategory: 'error',
             qr: st.qr,
             subDetail: secName,
-            photoData: st.photoData
+            photoData: st.photoData,
+            sex: st.sex
           }
         };
       }
@@ -265,13 +268,14 @@ function createBrowserFallback(): BantayApi {
         ok: true,
         kind: 'student_out',
         personId: st.id,
-        name: `${st.firstName} ${st.lastName}`,
+        name: st.firstName,
         message: 'See you tomorrow!\nTravel safe.',
         statusCategory: 'departure',
         qr: st.qr,
         subDetail: secName,
         detail: 'Your parent has been notified that you left school',
-        photoData: st.photoData
+        photoData: st.photoData,
+        sex: st.sex
       };
       saveLocal(d);
       return { ok: true, data: res };

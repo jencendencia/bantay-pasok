@@ -38,7 +38,8 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> =
   { table: 'sections', column: 'slot_times', ddl: 'TEXT' },
   { table: 'announcements', column: 'video_data', ddl: 'TEXT' },
   { table: 'students', column: 'photo_data', ddl: 'TEXT' },
-  { table: 'teachers', column: 'photo_data', ddl: 'TEXT' }
+  { table: 'teachers', column: 'photo_data', ddl: 'TEXT' },
+  { table: 'teachers', column: 'sex', ddl: 'TEXT' }
 ];
 
 function defaultConfig(userDataDir: string): DbConfig {
@@ -98,7 +99,7 @@ const TABLE_DDL: Record<string, string> = {
   users: '"id" TEXT PRIMARY KEY, "username" TEXT, "password_hash" TEXT, "role" TEXT, "display_name" TEXT',
   sections: '"id" TEXT PRIMARY KEY, "name" TEXT, "grade" TEXT, "color" TEXT, "slot_times" TEXT',
   departments: '"id" TEXT PRIMARY KEY, "name" TEXT',
-  teachers: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "department_id" TEXT, "number" TEXT',
+  teachers: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "sex" TEXT, "department_id" TEXT, "number" TEXT',
   guardians: '"id" TEXT PRIMARY KEY, "last_name" TEXT, "first_name" TEXT, "number" TEXT, "address" TEXT, "email" TEXT',
   students: '"id" TEXT PRIMARY KEY, "qr" TEXT, "last_name" TEXT, "first_name" TEXT, "middle_name" TEXT, "sex" TEXT, "number" TEXT, "section_id" TEXT, "guardian_id" TEXT, "photo_data" TEXT',
   slots: '"id" TEXT PRIMARY KEY, "section_id" TEXT, "subject" TEXT, "department_id" TEXT, "teacher_id" TEXT, "start" TEXT, "end" TEXT, "days" TEXT',
