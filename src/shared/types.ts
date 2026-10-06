@@ -239,6 +239,8 @@ export interface ScanResult {
   kind: 'teacher' | 'student_in' | 'student_out' | 'unknown' | 'duplicate';
   personId?: string;
   name?: string;
+  /** First + last name for the scanner's left identity panel (the greeting stays first-name-only). */
+  fullName?: string;
   detail?: string;
   statusCategory?: 'early' | 'on_time' | 'late' | 'departure' | 'teacher' | 'error';
   qr?: string;

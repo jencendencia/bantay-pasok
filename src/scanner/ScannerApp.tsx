@@ -138,6 +138,10 @@ export default function ScannerApp(): React.ReactElement {
   const currentFS = activeAnnouncements[currentIdx] ?? null;
   const advanceRotation = (): void => { setVideoPin(null); setAdvTick(t => t + 1); };
 
+  // Duplicates keep kind 'duplicate'; statusCategory 'teacher' marks a teacher re-scan
+  // so the left identity panel still shows the teacher look and department.
+  const scanIsTeacher = activeScan?.kind === 'teacher' || activeScan?.statusCategory === 'teacher';
+
   return (
     <div style={{ height: '100vh', position: 'relative' }} onClick={() => inputRef.current?.focus()}>
       <TitleBar title="Swiped Perfectly Just-in-time · Scanner" theme="dark" target="scanner" controls={false} />
@@ -172,15 +176,16 @@ export default function ScannerApp(): React.ReactElement {
                   />
                 ) : (
                   <AvatarIcon
-                    role={activeScan.kind === 'teacher' ? 'teacher' : 'student'}
+                    role={scanIsTeacher ? 'teacher' : 'student'}
                     sex={activeScan.sex ?? (activeScan.name?.includes('Ma.') || activeScan.name?.includes('Maria') || activeScan.name?.includes('Sofia') || activeScan.name?.includes('Bea') ? 'F' : 'M')}
                     size={150}
                   />
                 )}
               </div>
             </div>
-            <div className="scan-person-name">{activeScan.name || 'Student'}</div>
-            <div className="scan-person-sub">{activeScan.subDetail || (activeScan.kind === 'teacher' ? 'Faculty Member' : 'Student')}</div>
+            {/* Left panel shows the complete name; the greeting (right panel) stays first-name-only. */}
+            <div className="scan-person-name">{activeScan.fullName || activeScan.name || 'Student'}</div>
+            <div className="scan-person-sub">{activeScan.subDetail || (scanIsTeacher ? 'Faculty Member' : 'Student')}</div>
             <div className="scan-person-id">ID {activeScan.qr || (activeScan.personId ? activeScan.personId.toUpperCase() : 'VERIFIED')}</div>
           </div>
 

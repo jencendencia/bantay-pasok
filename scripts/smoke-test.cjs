@@ -37,12 +37,32 @@ async function main() {
   check('teacher has slots', d.slots.some(s => s.teacherId === teacher.id));
   const tScan = processScan(d, teacher.qr);
   check('teacher scan accepted', tScan.ok && tScan.kind === 'teacher');
-  check('teacher scan message', /Welcome, Ma'am\/Sir/.test(tScan.message));
+  check('teacher scan message (female: Ma\'am)', tScan.message === `Welcome, Ma'am ${teacher.firstName}. Have a great class!`);
+  const maleTeacher = d.teachers.find(t => t.sex === 'M');
+  const mScan = processScan(d, maleTeacher.qr);
+  check('teacher scan message (male: Sir)', mScan.message === `Welcome, Sir ${maleTeacher.firstName}. Have a great class!`);
+  const legacyTeacher = { ...teacher, id: 't_legacy', qr: 'T-LEGACY-1', sex: undefined };
+  d.teachers.push(legacyTeacher);
+  const lScan = processScan(d, legacyTeacher.qr);
+  check('teacher with no sex on record defaults to Ma\'am', lScan.message === `Welcome, Ma'am ${legacyTeacher.firstName}. Have a great class!`);
   check('teacher scan screen name is first name only', tScan.name === teacher.firstName && !tScan.name.includes(teacher.lastName));
+  check('teacher scan left panel shows full name', tScan.fullName === `${teacher.firstName} ${teacher.lastName}`);
   check('teacher scan message uses first name only', !tScan.message.includes(teacher.lastName));
   check('teacher scan result carries sex', tScan.sex === 'M' || tScan.sex === 'F');
   const tAgain = processScan(d, teacher.qr);
   check('repeat scan within 60s ignored', !tAgain.ok && tAgain.kind === 'duplicate');
+  check('duplicate scan carries full identity (no Student/ID VERIFIED fallback)', tAgain.fullName === `${teacher.firstName} ${teacher.lastName}` && tAgain.qr === teacher.qr && !!tAgain.photoData === !!teacher.photoData);
+  check('duplicate scan keeps teacher identity panel', tAgain.subDetail === 'Filipino Department' && tAgain.statusCategory === 'teacher');
+  // No-department teacher: sub-line must be exactly 'Faculty' (no leading space).
+  const depless = { ...teacher, id: 't_nodep', qr: 'T-NODEP-1', departmentId: 'dep_missing' };
+  d.teachers.push(depless);
+  const dow = new Date().getDay();
+  const depSlot = d.slots.find(s => s.teacherId === teacher.id && s.days.includes(dow)) || d.slots.find(s => s.teacherId === teacher.id);
+  const [sh, sm] = depSlot.start.split(':').map(Number);
+  const depAt = new Date();
+  depAt.setHours(sh, sm, 0, 0);
+  const ndScan = processScan(d, depless.qr, depAt.getTime());
+  check('teacher with no department shows "Faculty" sub-line', ndScan.ok && ndScan.kind === 'teacher' && ndScan.subDetail === 'Faculty');
 
   // 3. Student in + out + duplicate suppression (clock pinned: 10:00 arrival, 15:31 departure)
   const at = (h, m) => { const dt = new Date(); dt.setHours(h, m, 0, 0); return dt.getTime(); };
@@ -50,6 +70,7 @@ async function main() {
   const sIn = processScan(d, student.qr, at(10, 0));
   check('student arrival accepted', sIn.ok && sIn.kind === 'student_in');
   check('student screen name is first name only', sIn.name === student.firstName);
+  check('student left panel shows full name', sIn.fullName === `${student.firstName} ${student.lastName}`);
   check('screen message friendly (never says late)', !/late/i.test(sIn.message));
   const sOutside = processScan(d, student.qr, at(10, 1));
   check('mid-morning re-scan keeps student checked in', !sOutside.ok && sOutside.kind === 'duplicate');

@@ -1,6 +1,6 @@
 import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, SlotTimeWindows, Student, UpdateEvent, UpdateStatusInfo } from './shared/types';
 import { buildSeedData, hashPassword } from './shared/seed';
-import { timeToMin, fmt12, normalizeTerms, windowsForSection } from './shared/constants';
+import { timeToMin, fmt12, normalizeTerms, windowsForSection, teacherHonorific } from './shared/constants';
 
 export interface DbConfigView {
   enabled: boolean;
@@ -109,14 +109,22 @@ function createBrowserFallback(): BantayApi {
       const recent = d.scans.find(s => s.personId === pid && now - s.ts < 60_000);
       if (recent) {
         const p = teacher || student!;
+        const dupDep = teacher ? d.departments.find(x => x.id === teacher.departmentId) : undefined;
+        const dupSec = !teacher ? d.sections.find(x => x.id === student!.sectionId) : undefined;
         return {
           ok: false,
           data: {
             ok: false,
             kind: 'duplicate',
+            personId: p.id,
             name: p.firstName,
+            fullName: `${p.firstName} ${p.lastName}`,
             message: `Already scanned, ${p.firstName}. Please wait a moment.`,
-            statusCategory: 'error'
+            statusCategory: teacher ? 'teacher' : 'error',
+            qr: p.qr,
+            subDetail: dupDep ? `${dupDep.name} Department` : dupSec ? dupSec.name.replace(' - ', ' • ') : teacher ? 'Faculty' : 'Student',
+            photoData: p.photoData,
+            sex: p.sex
           }
         };
       }
@@ -130,7 +138,8 @@ function createBrowserFallback(): BantayApi {
           kind: 'teacher',
           personId: teacher.id,
           name: teacher.firstName,
-          message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
+          fullName: `${teacher.firstName} ${teacher.lastName}`,
+          message: `Welcome, ${teacherHonorific(teacher.sex)} ${teacher.firstName}. Have a great class!`,
           statusCategory: 'teacher',
           qr: teacher.qr,
           subDetail: dep ? `${dep.name} Department` : 'Faculty',
@@ -197,6 +206,7 @@ function createBrowserFallback(): BantayApi {
           kind: 'student_in',
           personId: st.id,
           name: st.firstName,
+          fullName: `${st.firstName} ${st.lastName}`,
           message: msg,
           statusCategory: cat,
           qr: st.qr,
@@ -224,6 +234,7 @@ function createBrowserFallback(): BantayApi {
             kind: 'duplicate',
             personId: st.id,
             name: st.firstName,
+            fullName: `${st.firstName} ${st.lastName}`,
             message: `See you at dismissal, ${st.firstName}!`,
             statusCategory: 'error',
             qr: st.qr,
@@ -269,6 +280,7 @@ function createBrowserFallback(): BantayApi {
         kind: 'student_out',
         personId: st.id,
         name: st.firstName,
+        fullName: `${st.firstName} ${st.lastName}`,
         message: 'See you tomorrow!\nTravel safe.',
         statusCategory: 'departure',
         qr: st.qr,

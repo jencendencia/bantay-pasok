@@ -1,5 +1,5 @@
 import type { AppData, ScanResult, Slot, Student, SlotTimeWindows, Teacher } from '../shared/types';
-import { timeToMin, fmt12, windowsForSection } from '../shared/constants';
+import { timeToMin, fmt12, windowsForSection, teacherHonorific } from '../shared/constants';
 import { todayStr } from './timeutil';
 
 export function isSchoolDay(d: AppData, date: string): boolean {
@@ -85,7 +85,11 @@ function findStudentByQr(d: AppData, code: string): Student | undefined {
 }
 
 // The scanner screen greets people by FIRST NAME ONLY (school kiosk style);
-// surnames stay on the admin side. ScanResult.name follows the same rule.
+// surnames stay on the admin side. ScanResult.name follows the same rule;
+// fullName feeds the left identity panel, which shows the complete name.
+function personName(p: Teacher | Student): string {
+  return `${p.firstName} ${p.lastName}`;
+}
 
 /** Handles a QR scan. Returns display message plus side effects (records, SMS).
  *  nowMs overrides the clock (used by tests and seed demos). */
@@ -105,8 +109,23 @@ export function processScan(d: AppData, raw: string, nowMs?: number): ScanResult
   const pid = teacher ? teacher.id : (student as Student).id;
   const recent = d.scans.find(s => s.personId === pid && now - s.ts < 60_000);
   if (recent) {
+    // Identity fields so the left panel still shows who re-scanned (not "Student / ID VERIFIED").
     const p = (teacher || student) as Teacher | Student;
-    return { ok: false, kind: 'duplicate', message: `Already scanned, ${p.firstName}. Please wait a moment.` };
+    const dupDep = teacher ? d.departments.find(x => x.id === teacher.departmentId) : undefined;
+    const dupSec = !teacher ? d.sections.find(x => x.id === (student as Student).sectionId) : undefined;
+    return {
+      ok: false,
+      kind: 'duplicate',
+      personId: p.id,
+      name: p.firstName,
+      fullName: personName(p),
+      message: `Already scanned, ${p.firstName}. Please wait a moment.`,
+      statusCategory: teacher ? 'teacher' : 'error',
+      qr: p.qr,
+      subDetail: dupDep ? `${dupDep.name} Department` : dupSec ? dupSec.name.replace(' - ', ' • ') : teacher ? 'Faculty' : 'Student',
+      photoData: p.photoData,
+      sex: p.sex
+    };
   }
   d.scans.push({ id: nextId('scan'), personId: pid, role: teacher ? 'teacher' : 'student', ts: now, kind: 'in' });
 
@@ -149,7 +168,8 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
     // Scan outside any nearby class period: log arrival only.
     return {
       ok: true, kind: 'teacher', personId: teacher.id, name: teacher.firstName,
-      message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
+      fullName: personName(teacher),
+      message: `Welcome, ${teacherHonorific(teacher.sex)} ${teacher.firstName}. Have a great class!`,
       statusCategory: 'teacher',
       qr: teacher.qr,
       subDetail: dep ? `${dep.name} Department` : 'Faculty',
@@ -165,7 +185,8 @@ function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): S
   const pNum = allSecSlots.findIndex(s => s.id === best!.id) + 1;
   return {
     ok: true, kind: 'teacher', personId: teacher.id, name: teacher.firstName,
-    message: `Welcome, Ma'am/Sir ${teacher.firstName}. Have a great class!`,
+    fullName: personName(teacher),
+    message: `Welcome, ${teacherHonorific(teacher.sex)} ${teacher.firstName}. Have a great class!`,
     statusCategory: 'teacher',
     qr: teacher.qr,
     subDetail: dep ? `${dep.name} Department` : 'Faculty',
@@ -203,6 +224,7 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     }
     return {
       ok: true, kind: 'student_in', personId: student.id, name: student.firstName,
+      fullName: personName(student),
       message: msg,
       statusCategory: cat,
       qr: student.qr,
@@ -217,6 +239,7 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     d.attendance.push({ id: nextId('att'), studentId: student.id, date, ts: now, kind: 'out' });
     return {
       ok: true, kind: 'student_out', personId: student.id, name: student.firstName,
+      fullName: personName(student),
       message: 'See you tomorrow!\nTravel safe.',
       statusCategory: 'departure',
       qr: student.qr,
@@ -232,6 +255,7 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     kind: 'duplicate',
     personId: student.id,
     name: student.firstName,
+    fullName: personName(student),
     message: `Done for today, ${student.firstName}. See you tomorrow!`,
     statusCategory: 'error',
     qr: student.qr,

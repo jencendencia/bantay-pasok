@@ -6,7 +6,7 @@ An Electron desktop app that monitors student arrival/departure and teacher clas
 
 - **Standby screen** (second display/scanner station): greeting header, text + photo announcements, live QR scan popups for teachers and students.
 - **One scanner for everyone**: a single QR scan identifies the person as teacher or student and follows the designated flow.
-  - Teacher: *"Welcome, Ma'am/Sir [Name]. Have a great class!"*
+  - Teacher: *"Welcome, Ma'am {Name}. Have a great class!"* ("Sir" for male teachers, based on the sex chosen at enrollment)
   - Student: early / on-time / late greetings (the screen never says "late" — only the parent SMS does).
   - Repeat scans within **60 s** are ignored.
 - **Parent SMS via GSM modem**: arrival and departure texts sent over serial AT commands; failures retry automatically and show in the dashboard sidebar. A simulation mode is available when no modem is connected.

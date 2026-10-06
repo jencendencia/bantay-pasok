@@ -89,6 +89,15 @@ export function windowsForSection(sec: Section | undefined, s: Settings): SlotTi
 }
 
 /**
+ * Polite address for a teacher on the scanner screen: "Ma'am" for female,
+ * "Sir" for male. Teachers enrolled before v1.0.7 have no sex on record and
+ * default to "Ma'am" (the app's original assumption).
+ */
+export function teacherHonorific(sex: 'M' | 'F' | undefined): string {
+  return sex === 'M' ? 'Sir' : "Ma'am";
+}
+
+/**
  * The school runs exactly three terms (Term 1–3). Older builds saved a fourth;
  * normalize on load so every install shows Terms 1–3 only.
  */
