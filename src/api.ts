@@ -1,6 +1,7 @@
-import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, SlotTimeWindows, Student, UpdateEvent, UpdateStatusInfo } from './shared/types';
+import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, UpdateEvent, UpdateStatusInfo } from './shared/types';
 import { buildSeedData, hashPassword } from './shared/seed';
-import { timeToMin, fmt12, normalizeTerms, windowsForSection, teacherHonorific } from './shared/constants';
+import { normalizeTerms } from './shared/constants';
+import { processScan } from './shared/scan';
 
 export interface DbConfigView {
   enabled: boolean;
@@ -72,12 +73,6 @@ function createBrowserFallback(): BantayApi {
     listeners.forEach(cb => cb(d));
   }
 
-  /** The AM/PM scan windows for a student (mirrors electron/attendance.ts). */
-  function windowsFor(d: AppData, st: Student): SlotTimeWindows {
-    const sec = d.sections.find(x => x.id === st.sectionId);
-    return windowsForSection(sec, d.settings);
-  }
-
   return {
     async getData() {
       return { ok: true, data: loadLocal() };
@@ -98,199 +93,57 @@ function createBrowserFallback(): BantayApi {
     },
     async scan(code: string) {
       const d = loadLocal();
-      const raw = code.trim().toUpperCase();
-      const teacher = d.teachers.find(t => t.qr.toUpperCase() === raw || t.id.toUpperCase() === raw);
-      const student = d.students.find(s => s.qr.toUpperCase() === raw || s.id.toUpperCase() === raw);
-      if (!teacher && !student) {
-        return { ok: false, data: { ok: false, kind: 'unknown', message: 'ID not recognized. Please see the admin.', statusCategory: 'error' } };
-      }
+      // ONE scan engine with the desktop app (src/shared/scan.ts): duplicate
+      // gating, classification, and the attendance/class-event records are all
+      // shared, so preview and packaged behavior cannot drift apart again.
+      const res = processScan(d, code);
+
+      // Browser-only transport: there is no GSM modem or SMTP here, so parent
+      // notices are queued as already-sent. The desktop app enqueues pending
+      // messages through gsm.ts / email.ts after the same shared scan.
       const now = Date.now();
-      const pid = teacher ? teacher.id : student!.id;
-      const recent = d.scans.find(s => s.personId === pid && now - s.ts < 60_000);
-      if (recent) {
-        const p = teacher || student!;
-        const dupDep = teacher ? d.departments.find(x => x.id === teacher.departmentId) : undefined;
-        const dupSec = !teacher ? d.sections.find(x => x.id === student!.sectionId) : undefined;
-        return {
-          ok: false,
-          data: {
-            ok: false,
-            kind: 'duplicate',
-            personId: p.id,
-            name: p.firstName,
-            fullName: `${p.firstName} ${p.lastName}`,
-            message: `Already scanned, ${p.firstName}. Please wait a moment.`,
-            statusCategory: teacher ? 'teacher' : 'error',
-            qr: p.qr,
-            subDetail: dupDep ? `${dupDep.name} Department` : dupSec ? dupSec.name.replace(' - ', ' • ') : teacher ? 'Faculty' : 'Student',
-            photoData: p.photoData,
-            sex: p.sex
+      if (res.ok && (res.kind === 'student_in' || res.kind === 'student_out')) {
+        const st = d.students.find(s => s.id === res.personId);
+        const guardian = st?.guardianId ? d.guardians.find(g => g.id === st.guardianId) : null;
+        const sec = st ? d.sections.find(x => x.id === st.sectionId) : undefined;
+        const secName = sec ? sec.name.replace(' - ', ' • ') : 'Student';
+        const arrived = res.kind === 'student_in';
+        const fullName = st ? `${st.firstName} ${st.lastName}` : '';
+        if (st && d.settings.smsEnabled) {
+          const to = guardian?.number || st.number;
+          if (to) {
+            d.sms.push({
+              id: `sms_${now}`,
+              ts: now,
+              to,
+              body: arrived
+                ? `Good morning! Your child ${fullName} (${secName}) arrived at school. – ${d.settings.schoolName}`
+                : `Your child ${fullName} (${secName}) left school. Safe travels! – ${d.settings.schoolName}`,
+              studentId: st.id,
+              kind: arrived ? 'arrival' : 'departure',
+              status: 'sent',
+              attempts: 1
+            });
           }
-        };
-      }
-      d.scans.push({ id: `scan_${now}`, personId: pid, role: teacher ? 'teacher' : 'student', ts: now, kind: 'in' });
-
-      if (teacher) {
-        const dep = d.departments.find(x => x.id === teacher.departmentId);
-        const sec = d.sections[0];
-        const res: ScanResult = {
-          ok: true,
-          kind: 'teacher',
-          personId: teacher.id,
-          name: teacher.firstName,
-          fullName: `${teacher.firstName} ${teacher.lastName}`,
-          message: `Welcome, ${teacherHonorific(teacher.sex)} ${teacher.firstName}. Have a great class!`,
-          statusCategory: 'teacher',
-          qr: teacher.qr,
-          subDetail: dep ? `${dep.name} Department` : 'Faculty',
-          detail: `Period 3 · ${sec ? sec.name.split(' - ')[0] : ''} · Filipino · 9:30 AM`,
-          photoData: teacher.photoData,
-          sex: teacher.sex
-        };
-        saveLocal(d);
-        return { ok: true, data: res };
-      }
-
-      const st = student!;
-      const evs = d.attendance.filter(e => e.studentId === st.id);
-      const hasIn = evs.some(e => e.kind === 'in');
-      const sec = d.sections.find(x => x.id === st.sectionId);
-      const secName = sec ? sec.name.replace(' - ', ' • ') : 'Grade 8 • Narra';
-
-      if (!hasIn) {
-        d.attendance.push({ id: `att_${now}`, studentId: st.id, date: new Date(now).toISOString().slice(0, 10), ts: now, kind: 'in' });
-        const dt = new Date(now);
-        const mins = dt.getHours() * 60 + dt.getMinutes();
-        // Per-grade windows: Swiped in before AM in, Perfectly on time until PM in.
-        const w = windowsFor(d, st);
-        const earlyC = timeToMin(w.amIn);
-        const lateC = timeToMin(w.pmIn);
-        let msg = 'Just-in-time.\nHave an amazing day.';
-        let cat: 'early' | 'on_time' | 'late' = 'late';
-        if (mins < earlyC) { msg = 'Swiped in!\nHave an amazing day.'; cat = 'early'; }
-        else if (mins <= lateC) { msg = 'Perfectly on time!\nHave an amazing day.'; cat = 'on_time'; }
-
-        // queue mock SMS to guardian (real pipeline resolves the guardian's number; st.number is the fallback)
-        const guardianIn = st.guardianId ? d.guardians.find(g => g.id === st.guardianId) : null;
-        const smsTo = guardianIn?.number || st.number;
-        if (smsTo) {
-          d.sms.push({
-            id: `sms_${now}`,
-            ts: now,
-            to: smsTo,
-            body: `Good morning! Your child ${st.firstName} ${st.lastName} (${secName}) arrived at school. – ${d.settings.schoolName}`,
-            studentId: st.id,
-            kind: 'arrival',
-            status: 'sent',
-            attempts: 1
-          });
         }
-        // queue mock email to guardian
-        const guardian = st.guardianId ? d.guardians.find(g => g.id === st.guardianId) : null;
-        if (guardian?.email) {
+        if (st && d.settings.emailEnabled && guardian?.email) {
           d.emails.push({
             id: `em_${now}`,
             ts: now,
             to: guardian.email,
-            subject: `[${d.settings.schoolName}] Arrival notice - ${st.firstName} ${st.lastName}`,
-            body: `Good day! ${st.firstName} ${st.lastName} arrived at school. - ${d.settings.emailFromName}`,
+            subject: `[${d.settings.schoolName}] ${arrived ? 'Arrival' : 'Departure'} notice - ${fullName}`,
+            body: arrived
+              ? `Good day! ${fullName} arrived at school. - ${d.settings.emailFromName}`
+              : `${fullName} left school. Safe travels! - ${d.settings.emailFromName}`,
             studentId: st.id,
-            kind: 'arrival',
+            kind: arrived ? 'arrival' : 'departure',
             status: 'sent',
             attempts: 1
           });
         }
-
-        const res: ScanResult = {
-          ok: true,
-          kind: 'student_in',
-          personId: st.id,
-          name: st.firstName,
-          fullName: `${st.firstName} ${st.lastName}`,
-          message: msg,
-          statusCategory: cat,
-          qr: st.qr,
-          subDetail: secName,
-          detail: 'Your parent has been notified by text message',
-          photoData: st.photoData,
-          sex: st.sex
-        };
-        saveLocal(d);
-        return { ok: true, data: res };
       }
-
-      // Departure only records inside the grade's AM-out or PM-out window;
-      // otherwise the tap is treated as a duplicate (mirrors electron/attendance.ts).
-      const wOut = windowsFor(d, st);
-      const nowMin = new Date(now).getHours() * 60 + new Date(now).getMinutes();
-      const amOutM = timeToMin(wOut.amOut);
-      const pmOutM = timeToMin(wOut.pmOut);
-      const canLeave = (nowMin >= amOutM && nowMin < amOutM + 90) || nowMin >= pmOutM;
-      if (!canLeave) {
-        return {
-          ok: false,
-          data: {
-            ok: false,
-            kind: 'duplicate',
-            personId: st.id,
-            name: st.firstName,
-            fullName: `${st.firstName} ${st.lastName}`,
-            message: `See you at dismissal, ${st.firstName}!`,
-            statusCategory: 'error',
-            qr: st.qr,
-            subDetail: secName,
-            photoData: st.photoData,
-            sex: st.sex
-          }
-        };
-      }
-
-      // departure
-      d.attendance.push({ id: `att_${now}`, studentId: st.id, date: new Date(now).toISOString().slice(0, 10), ts: now, kind: 'out' });
-      const guardianOutNum = st.guardianId ? d.guardians.find(g => g.id === st.guardianId)?.number : null;
-      const smsOutTo = guardianOutNum || st.number;
-      if (smsOutTo) {
-        d.sms.push({
-          id: `sms_${now}`,
-          ts: now,
-          to: smsOutTo,
-          body: `Your child ${st.firstName} ${st.lastName} (${secName}) left school. Safe travels! – ${d.settings.schoolName}`,
-          studentId: st.id,
-          kind: 'departure',
-          status: 'sent',
-          attempts: 1
-        });
-      }
-      const guardianOut = st.guardianId ? d.guardians.find(g => g.id === st.guardianId) : null;
-      if (guardianOut?.email) {
-        d.emails.push({
-          id: `em_${now}`,
-          ts: now,
-          to: guardianOut.email,
-          subject: `[${d.settings.schoolName}] Departure notice - ${st.firstName} ${st.lastName}`,
-          body: `${st.firstName} ${st.lastName} left school. Safe travels! - ${d.settings.emailFromName}`,
-          studentId: st.id,
-          kind: 'departure',
-          status: 'sent',
-          attempts: 1
-        });
-      }
-      const res: ScanResult = {
-        ok: true,
-        kind: 'student_out',
-        personId: st.id,
-        name: st.firstName,
-        fullName: `${st.firstName} ${st.lastName}`,
-        message: 'See you tomorrow!\nTravel safe.',
-        statusCategory: 'departure',
-        qr: st.qr,
-        subDetail: secName,
-        detail: 'Your parent has been notified that you left school',
-        photoData: st.photoData,
-        sex: st.sex
-      };
       saveLocal(d);
-      return { ok: true, data: res };
+      return res.ok ? { ok: true, data: res } : { ok: false, data: res };
     },
     async setSlotReason(slotId, date, reason, note) {
       const d = loadLocal();

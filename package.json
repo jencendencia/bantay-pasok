@@ -1,7 +1,7 @@
 {
   "name": "bantay-pasok",
   "productName": "Swiped Perfectly Just-in-time",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Swiped Perfectly Just-in-time — real-time teachers and students attendance monitoring with QR scanning and parent SMS",
   "main": "dist-electron/electron/main.js",
   "author": "Swiped Perfectly Just-in-time",
@@ -65,6 +65,7 @@
     "better-sqlite3": "^11.10.0",
     "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
+    "html-to-image": "^1.11.13",
     "nodemailer": "^10.0.10",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",

@@ -1,6 +1,3 @@
-export function todayStr(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
+// todayStr moved to the shared module (the scan engine needs it too);
+// re-exported here so existing imports keep working.
+export { todayStr } from '../shared/constants';

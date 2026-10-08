@@ -2,9 +2,31 @@ import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
 import { Modal, Pill, AvatarIcon, printNodes, confirmDialog, alertDialog } from '../ui';
-import { IdCard } from '../components/IdCard';
+import { IdCard, type IdCardProps } from '../components/IdCard';
 import { StudentFace } from '../components/StudentFace';
-import type { Student } from '../shared/types';
+import { renderIdCardJpeg, downloadDataUrl, downloadIdCardsZip, type IdCardZipItem } from '../components/idCardImage';
+import type { AppData, Student } from '../shared/types';
+
+/** The ID card for one student — the single definition behind preview, print and JPEG export. */
+function studentIdCard(student: Student, data: AppData): IdCardProps {
+  const sec = data.sections.find(s => s.id === student.sectionId);
+  const sub = sec?.grade ? `${sec.grade} • ${sec.name.split(' • ')[1] || sec.name}` : sec?.name || 'Student';
+  return {
+    variant: 'student',
+    schoolName: data.settings.schoolName,
+    subLabel: `School Year ${data.settings.schoolYear}`,
+    name: `${student.firstName} ${student.lastName}`,
+    sub,
+    sex: student.sex,
+    qr: student.qr,
+    photoData: student.photoData
+  };
+}
+
+/** File name (no extension) for one student's JPEG / ZIP entry. */
+function studentCardFile(s: Student): string {
+  return `${s.lastName}_${s.firstName}_${s.qr}`;
+}
 
 export default function Students(): React.ReactElement {
   const { data, refresh } = useData();
@@ -15,6 +37,7 @@ export default function Students(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [qrStudent, setQrStudent] = useState<Student | null>(null);
+  const [jpegsBusy, setJpegsBusy] = useState<number | null>(null);
 
   if (!data) return <div className="empty">Loading…</div>;
 
@@ -31,6 +54,31 @@ export default function Students(): React.ReactElement {
 
   const maleCount = data.students.filter(s => s.sex === 'M').length;
   const femaleCount = data.students.filter(s => s.sex === 'F').length;
+
+  // Section chosen for print / JPEG batch export (same roster for both).
+  const sectionPick = sectionFilter === 'all' ? null : (data.sections.find(x => x.id === sectionFilter) ?? null);
+  const sectionStudents = sectionPick
+    ? data.students
+        .filter(s => s.sectionId === sectionPick.id)
+        .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`))
+    : [];
+
+  const downloadSectionJpegs = async (): Promise<void> => {
+    if (!sectionPick || jpegsBusy !== null) return;
+    if (!sectionStudents.length) { await alertDialog(`No students in ${sectionPick.name} yet.`); return; }
+    setJpegsBusy(0);
+    try {
+      const items: IdCardZipItem[] = sectionStudents.map(s => ({
+        file: studentCardFile(s),
+        card: studentIdCard(s, data)
+      }));
+      await downloadIdCardsZip(items, `Student_IDs_${sectionPick.name}`, done => setJpegsBusy(done));
+    } catch {
+      await alertDialog('Could not generate the ID card images.');
+    } finally {
+      setJpegsBusy(null);
+    }
+  };
 
   return (
     <div>
@@ -86,37 +134,29 @@ export default function Students(): React.ReactElement {
             <option value="all">All sections</option>
             {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          {sectionFilter !== 'all' && (
-            <button
-              className="btn primary small"
-              onClick={() => {
-                const sec = data.sections.find(x => x.id === sectionFilter);
-                const studs = data.students
-                  .filter(s => s.sectionId === sectionFilter)
-                  .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
-                if (!studs.length) { void alertDialog(`No students in ${sec?.name} yet.`); return; }
-                printNodes(studs.map(s => {
-                  const sc = data.sections.find(x => x.id === s.sectionId);
-                  const sub = sc?.grade ? `${sc.grade} • ${sc.name.split(' • ')[1] || sc.name}` : sc?.name || 'Student';
-                  return (
-                    <IdCard
-                      key={s.id}
-                      variant="student"
-                      schoolName={data.settings.schoolName}
-                      subLabel={`School Year ${data.settings.schoolYear}`}
-                      name={`${s.firstName} ${s.lastName}`}
-                      sub={sub}
-                      sex={s.sex}
-                      qr={s.qr}
-                      photoData={s.photoData}
-                    />
-                  );
-                }));
-              }}
-              title="Print ID cards for every student in the selected section"
-            >
-              🖨 Print section ID cards ({data.students.filter(s => s.sectionId === sectionFilter).length})
-            </button>
+          {sectionPick && (
+            <>
+              <button
+                className="btn primary small"
+                onClick={() => {
+                  if (!sectionStudents.length) { void alertDialog(`No students in ${sectionPick.name} yet.`); return; }
+                  printNodes(sectionStudents.map(s => <IdCard key={s.id} {...studentIdCard(s, data)} />));
+                }}
+                title="Print ID cards for every student in the selected section"
+              >
+                🖨 Print section ID cards ({sectionStudents.length})
+              </button>
+              <button
+                className="btn ghost small"
+                disabled={jpegsBusy !== null}
+                onClick={() => void downloadSectionJpegs()}
+                title={`Download JPEG ID cards for every student in ${sectionPick.name}`}
+              >
+                {jpegsBusy !== null
+                  ? `⬇ JPEGs ${jpegsBusy}/${sectionStudents.length}…`
+                  : `⬇ JPEGs (${sectionStudents.length})`}
+              </button>
+            </>
           )}
         </div>
 
@@ -442,43 +482,33 @@ function StudentFormModal({ existing, onClose }: { existing?: Student; onClose: 
 // Student ID Card Modal matching 05_id_cards_qr.png
 function PrintStudentIdModal({ student, onClose }: { student: Student; onClose: () => void }): React.ReactElement {
   const { data } = useData();
+  const [dlBusy, setDlBusy] = useState(false);
   if (!data) return <div />;
-  const sec = data.sections.find(s => s.id === student.sectionId);
-  const sub = sec?.grade ? `${sec.grade} • ${sec.name.split(' • ')[1] || sec.name}` : sec?.name || 'Student';
+  const card = studentIdCard(student, data);
 
-  const printCard = (): void => {
-    printNodes(
-      <IdCard
-        variant="student"
-        schoolName={data.settings.schoolName}
-        subLabel={`School Year ${data.settings.schoolYear}`}
-        name={`${student.firstName} ${student.lastName}`}
-        sub={sub}
-        sex={student.sex}
-        qr={student.qr}
-        photoData={student.photoData}
-      />
-    );
+  const downloadJpeg = async (): Promise<void> => {
+    setDlBusy(true);
+    try {
+      downloadDataUrl(await renderIdCardJpeg(card), studentCardFile(student) + '.jpg');
+    } catch {
+      await alertDialog('Could not generate the JPEG for this ID card.');
+    } finally {
+      setDlBusy(false);
+    }
   };
 
   return (
     <Modal title="Student ID card" onClose={onClose} width={420}>
       <div style={{ display: 'grid', placeItems: 'center', padding: '10px 0' }}>
-        <IdCard
-          variant="student"
-          schoolName={data.settings.schoolName}
-          subLabel={`School Year ${data.settings.schoolYear}`}
-          name={`${student.firstName} ${student.lastName}`}
-          sub={sub}
-          sex={student.sex}
-          qr={student.qr}
-          photoData={student.photoData}
-        />
+        <IdCard {...card} />
       </div>
 
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Close</button>
-        <button className="btn primary" onClick={printCard}>
+        <button className="btn ghost" disabled={dlBusy} onClick={() => void downloadJpeg()}>
+          {dlBusy ? 'Generating…' : '⬇ Download JPEG'}
+        </button>
+        <button className="btn primary" onClick={() => printNodes(<IdCard {...card} />)}>
           Print ID Card
         </button>
       </div>

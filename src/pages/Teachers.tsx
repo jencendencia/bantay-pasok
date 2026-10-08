@@ -1,10 +1,31 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Pill, Segmented, AvatarIcon, printNodes, confirmDialog } from '../ui';
+import { Modal, Pill, Segmented, AvatarIcon, printNodes, confirmDialog, alertDialog } from '../ui';
 import { fmt12, timeToMin, ABSENCE_REASONS } from '../shared/constants';
-import { IdCard } from '../components/IdCard';
-import type { Teacher, Slot } from '../shared/types';
+import { IdCard, type IdCardProps } from '../components/IdCard';
+import { renderIdCardJpeg, downloadDataUrl, downloadIdCardsZip, type IdCardZipItem } from '../components/idCardImage';
+import type { AppData, Teacher, Slot } from '../shared/types';
+
+/** The ID card for one teacher — the single definition behind preview, print and JPEG export. */
+function teacherIdCard(teacher: Teacher, data: AppData): IdCardProps {
+  const dep = data.departments.find(d => d.id === teacher.departmentId);
+  return {
+    variant: 'teacher',
+    schoolName: data.settings.schoolName,
+    subLabel: 'Faculty and staff',
+    name: `${teacher.firstName} ${teacher.lastName}`,
+    sub: dep?.name ? `${dep.name} Department` : 'Faculty Member',
+    sex: teacher.sex ?? 'F',
+    qr: teacher.qr,
+    photoData: teacher.photoData
+  };
+}
+
+/** File name (no extension) for one teacher's JPEG / ZIP entry. */
+function teacherCardFile(t: Teacher): string {
+  return `${t.lastName}_${t.firstName}_${t.qr}`;
+}
 
 type SortKey = 'alpha' | 'arrival';
 
@@ -32,6 +53,8 @@ export default function Teachers(): React.ReactElement {
   const [qrTeacher, setQrTeacher] = useState<Teacher | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [reasonSlot, setReasonSlot] = useState<{ slot: Slot; status: { reason: string; note: string } | null } | null>(null);
+  const [cardSecFilter, setCardSecFilter] = useState('all');
+  const [jpegsBusy, setJpegsBusy] = useState<number | null>(null);
 
   if (!data) return <div className="empty">Loading…</div>;
   const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -55,6 +78,32 @@ export default function Teachers(): React.ReactElement {
     const inCount = mine.filter(s => data.classEvents.some(e => e.slotId === s.id && e.date === dateStr)).length;
     return { dep, total: mine.length, inCount };
   }).filter(r => r.total > 0);
+
+  // ID-card batch export: every teacher who teaches the chosen section (deduped),
+  // because teachers belong to sections through the class program.
+  const cardSection = cardSecFilter === 'all' ? null : (data.sections.find(s => s.id === cardSecFilter) ?? null);
+  const sectionTeacherIds = cardSection
+    ? new Set(data.slots.filter(s => s.sectionId === cardSection.id).map(s => s.teacherId))
+    : null;
+  const batchTeachers = (sectionTeacherIds ? data.teachers.filter(t => sectionTeacherIds.has(t.id)) : [])
+    .sort((a, b) => `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`));
+
+  const downloadSectionJpegs = async (): Promise<void> => {
+    if (!cardSection || jpegsBusy !== null) return;
+    if (!batchTeachers.length) { await alertDialog(`No teachers assigned to ${cardSection.name} yet.`); return; }
+    setJpegsBusy(0);
+    try {
+      const items: IdCardZipItem[] = batchTeachers.map(t => ({
+        file: teacherCardFile(t),
+        card: teacherIdCard(t, data)
+      }));
+      await downloadIdCardsZip(items, `Teacher_IDs_${cardSection.name}`, done => setJpegsBusy(done));
+    } catch {
+      await alertDialog('Could not generate the ID card images.');
+    } finally {
+      setJpegsBusy(null);
+    }
+  };
 
   type LogRow = {
     ts: number | null;
@@ -245,6 +294,27 @@ export default function Teachers(): React.ReactElement {
             style={{ marginLeft: 14, padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)', width: 170 }}
           />
           <div className="spacer" />
+          <select
+            value={cardSecFilter}
+            onChange={e => setCardSecFilter(e.target.value)}
+            title="Pick a section to download JPEG ID cards for its teachers"
+            style={{ padding: '7px 11px', borderRadius: 8, border: '1px solid var(--line)' }}
+          >
+            <option value="all">Download by section…</option>
+            {data.sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {cardSection && (
+            <button
+              className="btn primary small"
+              disabled={jpegsBusy !== null}
+              onClick={() => void downloadSectionJpegs()}
+              title={`Download JPEG ID cards for every teacher in ${cardSection.name}`}
+            >
+              {jpegsBusy !== null
+                ? `⬇ JPEGs ${jpegsBusy}/${batchTeachers.length}…`
+                : `⬇ JPEGs (${batchTeachers.length})`}
+            </button>
+          )}
           {selected.size > 0 ? (
             <>
               <span className="toolbar-label">{selected.size} selected</span>
@@ -528,37 +598,33 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
 // Teacher ID Card Modal matching 05_id_cards_qr.png
 function PrintTeacherIdModal({ teacher, onClose }: { teacher: Teacher; onClose: () => void }): React.ReactElement {
   const { data } = useData();
+  const [dlBusy, setDlBusy] = useState(false);
   if (!data) return <div />;
-  const dep = data.departments.find(d => d.id === teacher.departmentId);
+  const card = teacherIdCard(teacher, data);
+
+  const downloadJpeg = async (): Promise<void> => {
+    setDlBusy(true);
+    try {
+      downloadDataUrl(await renderIdCardJpeg(card), teacherCardFile(teacher) + '.jpg');
+    } catch {
+      await alertDialog('Could not generate the JPEG for this ID card.');
+    } finally {
+      setDlBusy(false);
+    }
+  };
 
   return (
     <Modal title="Teacher ID card" onClose={onClose} width={420}>
       <div style={{ display: 'grid', placeItems: 'center', padding: '10px 0' }}>
-        <IdCard
-          variant="teacher"
-          schoolName={data.settings.schoolName}
-          subLabel="Faculty and staff"
-          name={`${teacher.firstName} ${teacher.lastName}`}
-          sub={dep?.name ? `${dep.name} Department` : 'Faculty Member'}
-          sex={teacher.sex ?? 'F'}
-          qr={teacher.qr}
-          photoData={teacher.photoData}
-        />
+        <IdCard {...card} />
       </div>
 
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Close</button>
-        <button className="btn primary" onClick={() => printNodes(
-          <IdCard
-            variant="teacher"
-            schoolName={data.settings.schoolName}
-            subLabel="Faculty and staff"
-            name={`${teacher.firstName} ${teacher.lastName}`}
-            sub={dep?.name ? `${dep.name} Department` : 'Faculty Member'}
-            sex={teacher.sex ?? 'F'}
-            qr={teacher.qr}
-          />
-        )}>
+        <button className="btn ghost" disabled={dlBusy} onClick={() => void downloadJpeg()}>
+          {dlBusy ? 'Generating…' : '⬇ Download JPEG'}
+        </button>
+        <button className="btn primary" onClick={() => printNodes(<IdCard {...card} />)}>
           Print ID Card
         </button>
       </div>

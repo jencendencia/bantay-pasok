@@ -64,6 +64,29 @@ async function main() {
   const ndScan = processScan(d, depless.qr, depAt.getTime());
   check('teacher with no department shows "Faculty" sub-line', ndScan.ok && ndScan.kind === 'teacher' && ndScan.subDetail === 'Faculty');
 
+  // Unknown code: rejected with the admin hint and the error panel category.
+  const unk = processScan(d, 'NOPE-999');
+  check('unknown QR rejected with admin hint', !unk.ok && unk.kind === 'unknown' && /not recognized/.test(unk.message) && unk.statusCategory === 'error');
+  // The engine accepts the printed QR or the internal record id on every surface.
+  const idClone = { ...teacher, id: 't_idlookup', qr: 'T-IDLOOKUP-1' };
+  d.teachers.push(idClone);
+  const idScan = processScan(d, idClone.id);
+  check('scan accepts the internal id as well as the printed QR', idScan.ok && idScan.kind === 'teacher' && idScan.personId === idClone.id);
+  // A teacher scanning inside a scheduled period records the class event —
+  // that row is what the admin Teachers log displays (the old browser copy
+  // never recorded it, so preview mode always showed "No scan yet").
+  d.scans.length = 0; // fresh duplicate gate so the pinned time below can't trip the 60s dedup
+  const ceSlot = d.slots.find(s => s.teacherId === teacher.id);
+  const ceAt = new Date();
+  let ceGuard = 0;
+  while (!ceSlot.days.includes(ceAt.getDay()) && ceGuard++ < 7) ceAt.setDate(ceAt.getDate() + 1);
+  const [ceh, cem] = ceSlot.start.split(':').map(Number);
+  ceAt.setHours(ceh, cem, 0, 0);
+  const ceBefore = d.classEvents.length;
+  const ceScan = processScan(d, teacher.qr, ceAt.getTime());
+  const ceLast = d.classEvents[d.classEvents.length - 1];
+  check('teacher scan inside a period records the class event', ceScan.ok && ceScan.kind === 'teacher' && d.classEvents.length === ceBefore + 1 && ceLast.slotId === ceSlot.id && !!ceScan.detail);
+
   // 3. Student in + out + duplicate suppression (clock pinned: 10:00 arrival, 15:31 departure)
   const at = (h, m) => { const dt = new Date(); dt.setHours(h, m, 0, 0); return dt.getTime(); };
   const student = d.students[0];
@@ -124,6 +147,80 @@ async function main() {
   const m = d.sms[d.sms.length - 1];
   for (let i = 0; i < 4; i++) { try { await g.tick(); } catch { /* tick swallows */ } }
   check('sms retry ends sent or failed', m.status === 'sent' || m.status === 'failed');
+
+  // 8. The browser fallback (src/api.ts) runs the SAME shared scan engine
+  //    (src/shared/scan.ts) — proven here against its localStorage store.
+  globalThis.localStorage = (() => {
+    const store = new Map();
+    return {
+      getItem: k => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => { store.set(k, String(v)); },
+      removeItem: k => { store.delete(k); }
+    };
+  })();
+  const { fmt12 } = require('../dist-electron/shared/constants.js');
+  const browserApi = require('../dist-electron/api.js').api;
+  const bUnknown = await browserApi.scan('NOPE-999');
+  check('browser: unknown QR rejected like the desktop app', bUnknown.ok === false && bUnknown.data?.kind === 'unknown' && bUnknown.data?.statusCategory === 'error');
+  const bd = JSON.parse(globalThis.localStorage.getItem('bantay_pasok_browser_data'));
+  const bTeacher = bd.teachers[0];
+  const bSlot = bd.slots.find(s => s.teacherId === bTeacher.id);
+  const bAt = new Date();
+  let bGuard = 0;
+  while (!bSlot.days.includes(bAt.getDay()) && bGuard++ < 7) bAt.setDate(bAt.getDate() + 1);
+  const [bh, bm] = bSlot.start.split(':').map(Number);
+  bAt.setHours(bh, bm, 0, 0);
+  const realNow = Date.now;
+  Date.now = () => bAt.getTime(); // pin the browser clock into the scheduled period
+  let bTeacherRes;
+  try { bTeacherRes = await browserApi.scan(bTeacher.qr); } finally { Date.now = realNow; }
+  const bd2 = JSON.parse(globalThis.localStorage.getItem('bantay_pasok_browser_data'));
+  check('browser: teacher scan records the class event (the old copy never did)', bTeacherRes.ok === true && bTeacherRes.data?.ok === true && bd2.classEvents.length === 1 && bd2.classEvents[0].slotId === bSlot.id);
+  check('browser: teacher detail matches the scheduled slot', !!bTeacherRes.data?.detail && bTeacherRes.data.detail.includes(fmt12(bSlot.start)));
+  Date.now = () => bAt.getTime() + 5_000;
+  let bDupRes;
+  try { bDupRes = await browserApi.scan(bTeacher.qr); } finally { Date.now = realNow; }
+  check('browser: duplicate keeps full identity like the desktop app', bDupRes.data?.kind === 'duplicate' && bDupRes.data?.fullName === `${bTeacher.firstName} ${bTeacher.lastName}` && bDupRes.data?.statusCategory === 'teacher');
+  const bStudent = bd2.students[0];
+  Date.now = () => bAt.getTime();
+  let bStudRes;
+  try { bStudRes = await browserApi.scan(bStudent.qr); } finally { Date.now = realNow; }
+  const bd3 = JSON.parse(globalThis.localStorage.getItem('bantay_pasok_browser_data'));
+  check('browser: student arrival records attendance and queues parent SMS', bStudRes.data?.kind === 'student_in' && bd3.attendance.length === 1 && bd3.sms.length === 1 && bd3.sms[0].status === 'sent');
+
+  // 9. ID-card batch ZIP (src/shared/zip.ts) — structure and CRCs verified
+  //    with Node's own zlib.crc32, an implementation independent of ours.
+  const { zipStore } = require('../dist-electron/shared/zip.js');
+  const { crc32: nodeCrc32 } = require('node:zlib');
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 70, 0]);
+  const txt = new TextEncoder().encode('id card batch');
+  const zip = zipStore([{ name: 'A_S-1.jpg', data: jpg }, { name: 'B_S-2.jpg', data: txt }]);
+  const zdv = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
+  const eocd = zip.length - 22;
+  check('zip: end-of-central-directory lists 2 entries',
+    zdv.getUint32(eocd, true) === 0x06054b50 && zdv.getUint16(eocd + 10, true) === 2);
+  let zp = zdv.getUint32(eocd + 16, true);
+  const zNames = [], zPayloads = [];
+  let zOk = true;
+  for (let i = 0; i < 2 && zOk; i++) {
+    if (zdv.getUint32(zp, true) !== 0x02014b50) { zOk = false; break; }
+    const crc = zdv.getUint32(zp + 16, true);
+    const size = zdv.getUint32(zp + 20, true);
+    const nlen = zdv.getUint16(zp + 28, true);
+    const lho = zdv.getUint32(zp + 42, true);
+    if (zdv.getUint32(lho, true) !== 0x04034b50 || zdv.getUint16(lho + 8, true) !== 0) { zOk = false; break; }
+    const dataOff = lho + 30 + zdv.getUint16(lho + 26, true) + zdv.getUint16(lho + 28, true);
+    const data = zip.subarray(dataOff, dataOff + size);
+    if (nodeCrc32(data) !== crc) { zOk = false; break; }
+    zNames.push(Buffer.from(zip.subarray(zp + 46, zp + 46 + nlen)).toString('ascii'));
+    zPayloads.push(Buffer.from(data));
+    zp += 46 + nlen;
+  }
+  check('zip: local headers, store method and zlib-verified CRCs', zOk);
+  check('zip: names and payloads round-trip byte-for-byte',
+    zNames.join(',') === 'A_S-1.jpg,B_S-2.jpg'
+    && Buffer.compare(zPayloads[0], Buffer.from(jpg)) === 0
+    && zPayloads[1].toString('ascii') === 'id card batch');
 
   console.log(`\n${pass} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);

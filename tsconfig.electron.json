@@ -11,5 +11,5 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["src/electron", "src/shared"]
+  "include": ["src/electron", "src/shared", "src/api.ts"]
 }

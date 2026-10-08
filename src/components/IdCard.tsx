@@ -8,7 +8,7 @@ import { monogramOf } from '../shared/constants';
  * and by the hidden print root (the only thing that prints).
  * A student photo (data URL) replaces the cartoon avatar when provided.
  */
-export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr, photoData }: {
+export interface IdCardProps {
   variant: 'student' | 'teacher';
   schoolName: string;
   subLabel: string;
@@ -17,7 +17,9 @@ export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr, phot
   sex: 'M' | 'F';
   qr: string;
   photoData?: string;
-}): React.ReactElement {
+}
+
+export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr, photoData }: IdCardProps): React.ReactElement {
   const monogram = monogramOf(schoolName);
 
   return (

@@ -1,4 +1,4 @@
-import type { Section, Settings, SlotTimeWindows } from './types';
+import type { AppData, Section, Settings, SlotTimeWindows } from './types';
 
 export const DEPARTMENTS = [
   { id: 'dep_math', name: 'Mathematics' },
@@ -158,6 +158,27 @@ export function monogramOf(schoolName: string): string {
 export function timeToMin(t: string): number {
   const [h, m] = t.split(':').map(Number);
   return h * 60 + (m || 0);
+}
+
+/** Local calendar day as YYYY-MM-DD (never UTC: the school day rolls over at midnight). */
+export function todayStr(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Minutes since midnight for a timestamp, in the machine's local time. */
+export function minutesOfDay(ts: number): number {
+  const dt = new Date(ts);
+  return dt.getHours() * 60 + dt.getMinutes();
+}
+
+/** The AM/PM scan windows for a student: their section's times, or the global rules. */
+export function studentWindows(d: AppData, studentId: string): SlotTimeWindows {
+  const st = d.students.find(s => s.id === studentId);
+  const sec = st ? d.sections.find(x => x.id === st.sectionId) : undefined;
+  return windowsForSection(sec, d.settings);
 }
 
 export function minToTime(min: number): string {
