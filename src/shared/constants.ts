@@ -31,6 +31,7 @@ export const ABSENCE_REASONS = [
 
 export const DEFAULT_SETTINGS: Settings = {
   schoolName: 'Mabuhay National High School',
+  schoolLogo: '',
   earlyCutoff: '07:00',
   lateAfter: '07:30',
   graceMinutes: 5,

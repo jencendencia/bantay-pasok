@@ -53,6 +53,9 @@ try {
     attempts: 1
   });
 
+  // The school logo is a long data URL living inside the settings KV row.
+  seed.settings.schoolLogo = 'data:image/png;base64,' + 'A'.repeat(4096);
+
   // 3. Schema + connect + version probe.
   ensureSchema(cfg);
   const db = new DbConnection();
@@ -70,6 +73,7 @@ try {
   ok(Array.isArray(back.slots[0].days) && back.slots[0].days.length === 5, 'slots days JSON column');
   ok(back.settings.schoolName === seed.settings.schoolName, 'settings kv schoolName');
   ok(back.settings.smtpPort === seed.settings.smtpPort, 'settings kv smtpPort');
+  ok(back.settings.schoolLogo === seed.settings.schoolLogo, 'settings kv schoolLogo (long data URL)');
   ok(Array.isArray(back.borrowed.sections), 'borrowed kv');
   ok('date' in back.holiday, 'holiday kv');
   ok(back.sms.some(s => s.id === 'sms_test1' && s.to === '+639170000001'), 'sms row with derived key');

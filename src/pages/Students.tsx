@@ -14,6 +14,7 @@ function studentIdCard(student: Student, data: AppData): IdCardProps {
   return {
     variant: 'student',
     schoolName: data.settings.schoolName,
+    logo: data.settings.schoolLogo,
     subLabel: `School Year ${data.settings.schoolYear}`,
     name: `${student.firstName} ${student.lastName}`,
     sub,

@@ -13,6 +13,7 @@ function teacherIdCard(teacher: Teacher, data: AppData): IdCardProps {
   return {
     variant: 'teacher',
     schoolName: data.settings.schoolName,
+    logo: data.settings.schoolLogo,
     subLabel: 'Faculty and staff',
     name: `${teacher.firstName} ${teacher.lastName}`,
     sub: dep?.name ? `${dep.name} Department` : 'Faculty Member',

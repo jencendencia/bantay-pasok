@@ -24,6 +24,8 @@ export default function SettingsPage(): React.ReactElement {
   const [upd, setUpd] = useState<UpdateStatusInfo | null>(null);
   const [updBusy, setUpdBusy] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [logoErr, setLogoErr] = useState<string | null>(null);
   React.useEffect(() => {
     void api.updateStatus().then(res => { if (res.ok && res.data) setUpd(res.data); });
     // Live progress while the updater downloads in the main process.
@@ -52,6 +54,46 @@ export default function SettingsPage(): React.ReactElement {
   const setS = (patch: Partial<Settings>): void => {
     setDraft(d => ({ ...(d ?? data.settings), ...patch }));
     setDirty(true);
+  };
+
+  // Reads the chosen logo, downscaled to 512px so data.json and SQLite stay light.
+  // PNG stays PNG (transparent logos keep their edges); JPEG/WebP re-encode as JPEG.
+  const pickLogo = (file: File | undefined): void => {
+    if (!file) return;
+    if (file.type && !/^image\/(png|jpeg|webp)$/.test(file.type)) {
+      setLogoErr('Please choose a PNG, JPEG or WebP image.');
+      return;
+    }
+    setLogoErr(null);
+    setLogoBusy(true);
+    const reader = new FileReader();
+    reader.onerror = () => { setLogoErr('That file could not be read.'); setLogoBusy(false); };
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => { setLogoErr('That file is not a readable image.'); setLogoBusy(false); };
+      img.onload = () => {
+        try {
+          const max = 512;
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round(img.width * scale));
+          canvas.height = Math.max(1, Math.round(img.height * scale));
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('no 2d context');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          setS({
+            schoolLogo: file.type === 'image/png'
+              ? canvas.toDataURL('image/png')
+              : canvas.toDataURL('image/jpeg', 0.92)
+          });
+        } catch {
+          setLogoErr('That image could not be converted.');
+        }
+        setLogoBusy(false);
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
   };
 
   const saveAll = async (): Promise<void> => {
@@ -90,7 +132,48 @@ export default function SettingsPage(): React.ReactElement {
               <div className="card-note">
                 ID card monograms, the scanner badge and SMS/email sign-offs all follow this name.
                 Current monogram: <b>{monogramOf(s.schoolName ?? '')}</b>
+                {s.schoolLogo ? ' · replaced by your uploaded logo in the sidebar and on ID cards.' : ''}
               </div>
+            </div>
+
+            <div className="field">
+              <label>School logo (sidebar and student/teacher ID cards)</label>
+              <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+                <div className="logo-preview" title="How the logo appears on an ID card">
+                  {s.schoolLogo
+                    ? <img src={s.schoolLogo} alt="School logo" />
+                    : <span>{monogramOf(s.schoolName ?? '')}</span>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn ghost small"
+                      disabled={logoBusy}
+                      onClick={() => document.getElementById('school-logo-input')?.click()}
+                    >
+                      {logoBusy ? 'Reading…' : s.schoolLogo ? 'Replace logo' : 'Upload logo'}
+                    </button>
+                    {s.schoolLogo && (
+                      <button type="button" className="btn ghost small" onClick={() => setS({ schoolLogo: '' })}>
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <div className="card-note" style={{ marginTop: 6 }}>
+                    PNG, JPEG or WebP · resized to 512px.
+                    Shown in the sidebar and on every printed or exported ID card once you save.
+                    {logoErr && <span style={{ color: '#b3261e', display: 'block' }}>{logoErr}</span>}
+                  </div>
+                </div>
+              </div>
+              <input
+                id="school-logo-input"
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                style={{ display: 'none' }}
+                onChange={e => { pickLogo(e.target.files?.[0]); e.target.value = ''; }}
+              />
             </div>
           </div>
 

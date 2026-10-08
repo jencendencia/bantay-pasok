@@ -53,7 +53,9 @@ function Shell(): React.ReactElement {
       <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-badge">✓</div>
+          <div className={data?.settings.schoolLogo ? 'brand-badge has-logo' : 'brand-badge'}>
+            {data?.settings.schoolLogo ? <img src={data.settings.schoolLogo} alt="" /> : '✓'}
+          </div>
           <div>
             <div className="brand-title" style={{ fontSize: 17 }}>Swiped<br />Perfectly<br />Just-in-time</div>
             <div className="brand-sub">Attendance and class monitor</div>

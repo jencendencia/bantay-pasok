@@ -11,6 +11,8 @@ import { monogramOf } from '../shared/constants';
 export interface IdCardProps {
   variant: 'student' | 'teacher';
   schoolName: string;
+  /** School logo (data URL) from Settings; when set it replaces the monogram letter. */
+  logo?: string;
   subLabel: string;
   name: string;
   sub: string;
@@ -19,13 +21,15 @@ export interface IdCardProps {
   photoData?: string;
 }
 
-export function IdCard({ variant, schoolName, subLabel, name, sub, sex, qr, photoData }: IdCardProps): React.ReactElement {
+export function IdCard({ variant, schoolName, logo, subLabel, name, sub, sex, qr, photoData }: IdCardProps): React.ReactElement {
   const monogram = monogramOf(schoolName);
 
   return (
     <div className="id-card-render">
       <div className="id-card-top">
-        <div className="id-card-monogram">{monogram}</div>
+        <div className={logo ? 'id-card-monogram has-logo' : 'id-card-monogram'}>
+          {logo ? <img src={logo} alt="" /> : monogram}
+        </div>
         <div>
           <div className="id-card-school">{schoolName}</div>
           <div className="id-card-school-sub">{subLabel}</div>

@@ -127,6 +127,8 @@ export interface SmsMessage {
 
 export interface Settings {
   schoolName: string;
+  /** Uploaded school logo (data URL) — sidebar badge and student/teacher ID cards. Empty = monogram. */
+  schoolLogo?: string;
   earlyCutoff: string;      // "07:00"
   lateAfter: string;        // "07:30"
   graceMinutes: number;     // teacher slot grace

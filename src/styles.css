@@ -93,6 +93,31 @@ input, select, textarea { font: inherit; color: inherit; }
   box-shadow: 0 4px 10px rgba(0,0,0,0.15);
 }
 
+/* Uploaded school logo (Settings) replaces the ✓ badge. White plate keeps dark logos readable. */
+.brand-badge.has-logo {
+  background: #ffffff;
+  padding: 5px;
+}
+.brand-badge.has-logo img {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain; border-radius: 8px;
+}
+
+/* Settings → School: logo preview styled like the ID card badge it feeds. */
+.logo-preview {
+  width: 64px; height: 64px; border-radius: 50%;
+  border: 2px solid var(--yellow); background: var(--green-900);
+  display: grid; place-items: center; overflow: hidden; flex: none;
+}
+.logo-preview img {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain; background: #ffffff;
+}
+.logo-preview span {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-weight: 800; font-size: 22px; color: var(--yellow);
+}
+
 .brand-title {
   font-family: 'Playfair Display', Georgia, serif;
   font-weight: 800; font-size: 21px; line-height: 1.1;
@@ -833,6 +858,15 @@ input, select, textarea { font: inherit; color: inherit; }
   font-family: 'Playfair Display', Georgia, serif;
   font-weight: 800; font-size: 15px; color: var(--yellow);
   flex: none;
+}
+/* Uploaded school logo replaces the monogram letter on the ID card header. */
+.id-card-monogram.has-logo {
+  background: #ffffff;
+  padding: 3px;
+}
+.id-card-monogram.has-logo img {
+  display: block; width: 100%; height: 100%;
+  object-fit: contain; border-radius: 50%;
 }
 .id-card-school {
   font-family: 'Playfair Display', Georgia, serif;
