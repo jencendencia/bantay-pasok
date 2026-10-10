@@ -1,7 +1,10 @@
 import ExcelJS from 'exceljs';
 import type { AppData, ReportParams } from '../shared/types';
 import { timeToMin } from '../shared/constants';
-import { todayStr } from './timeutil';
+import {
+  bucketByKey, countMarks, dayMark, schoolDaysBetween, teacherOccurrences, weekKey
+} from '../shared/reportStats';
+import type { MarkCounts } from '../shared/reportStats';
 
 const GREEN = 'FF0E3A2F';
 const YELLOW = 'FFF7E08A';
@@ -32,31 +35,21 @@ function headerRow(ws: ExcelJS.Worksheet, row: number, headers: string[]): void 
   ws.getRow(row).height = 24;
 }
 
-function statusFill(status: string): { fill?: string } {
-  if (status === 'P') return { fill: SOFT };
-  if (status === 'L') return { fill: ORANGE };
-  if (status === 'A') return { fill: RED };
-  if (status === 'OL') return { fill: PURPLE };
-  if (status === 'E') return { fill: SOFT };
-  if (status === 'T') return { fill: SOFT };
-  if (status === 'M') return { fill: PURPLE };
-  return {};
+function statusFill(status: string): string | null {
+  if (status === 'P') return SOFT;
+  if (status === 'L') return ORANGE;
+  if (status === 'A') return RED;
+  if (status === 'OL' || status === 'M') return PURPLE;
+  return null;
 }
 
-function markFor(d: AppData, slotId: string, date: string, grace: number, slotStartMin: number): string {
-  const e = d.classEvents.find(x => x.slotId === slotId && x.date === date);
-  if (e) {
-    const dt = new Date(e.ts);
-    const mins = dt.getHours() * 60 + dt.getMinutes();
-    return mins - slotStartMin > grace ? 'L' : 'P';
-  }
-  const st = d.slotStatuses.find(s => s.id === `${slotId}|${date}`);
-  if (st) {
-    if (st.reason === 'on_leave') return 'OL';
-    if (st.reason === 'in_meeting') return 'M';
-    return 'A';
-  }
-  return 'A';
+/** Paint a mark cell. Must run AFTER the row's values are set: assigning row.values resets cell style. */
+function fillMark(ws: ExcelJS.Worksheet, row: number, col: number, mark: string): void {
+  const fill = statusFill(mark);
+  if (!fill) return;
+  const cell = ws.getCell(row, col);
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+  cell.alignment = { horizontal: 'center' };
 }
 
 export async function buildReport(d: AppData, p: ReportParams): Promise<{ buffer: Buffer; filename: string }> {
@@ -64,27 +57,14 @@ export async function buildReport(d: AppData, p: ReportParams): Promise<{ buffer
   wb.creator = 'Swiped Perfectly Just-in-time';
   wb.created = new Date();
 
-  const grace = d.settings.graceMinutes;
-  const from = p.from, to = p.to;
-  const dateList: string[] = [];
-  {
-    const cur = new Date(from + 'T00:00:00');
-    const end = new Date(to + 'T00:00:00');
-    while (cur <= end) {
-      dateList.push(cur.toISOString().slice(0, 10));
-      cur.setDate(cur.getDate() + 1);
-    }
-  }
-  const schoolDays = dateList.filter(dt => {
-    const dow = new Date(dt + 'T00:00:00').getDay();
-    return dow >= 1 && dow <= 5 && !d.settings.holidayDates.includes(dt) && d.holiday.date !== dt;
-  });
+  // Weekday, non-holiday, local-calendar school days in range.
+  const schoolDays = schoolDaysBetween(d, p.from, p.to);
 
   if (p.type === 'teacher') {
     return teacherAttendanceWorkbook(d, wb, schoolDays, p);
   }
   if (p.type === 'teacher_individual') {
-    return teacherIndividualWorkbook(d, wb, schoolDays, p);
+    return teacherIndividualWorkbook(d, wb, p);
   }
   if (p.type === 'student') {
     return studentAttendanceWorkbook(d, wb, schoolDays, p);
@@ -96,46 +76,40 @@ async function teacherAttendanceWorkbook(
   d: AppData, wb: ExcelJS.Workbook, days: string[], p: ReportParams
 ): Promise<{ buffer: Buffer; filename: string }> {
   const ws = wb.addWorksheet('Summary');
-  const dow = (dt: string) => new Date(dt + 'T00:00:00').getDay();
-  const schoolDays = days.filter(dt => dow(dt) >= 1 && dow(dt) <= 5);
-  const slots = d.slots.filter(s => (!p.sectionId || s.sectionId === p.sectionId) && s.days.some(x => x >= 1 && x <= 5));
+  const occs = teacherOccurrences(d, p.from, p.to)
+    .filter(o => !p.sectionId || o.slot.sectionId === p.sectionId);
+  const totals = bucketByKey(occs, o => o.slot.teacherId);
+  // teacherId -> date -> marks of that day (one cell per teacher-day)
+  const marksByTD = new Map<string, Map<string, string[]>>();
+  for (const o of occs) {
+    let perDate = marksByTD.get(o.slot.teacherId);
+    if (!perDate) { perDate = new Map(); marksByTD.set(o.slot.teacherId, perDate); }
+    const arr = perDate.get(o.date) ?? [];
+    arr.push(o.mark);
+    perDate.set(o.date, arr);
+  }
 
   titleBlock(ws, `${d.settings.schoolName} · Teacher class attendance`,
-    `${p.from} to ${p.to} · Late = scan more than ${d.settings.graceMinutes} minutes after the scheduled start · Excused leave is not counted absent`, 9);
-  headerRow(ws, 4, ['Teacher', 'Department', ...schoolDays.map(dt => dt), 'Scheduled', 'Attended', 'Late', 'Absent']);
+    `${p.from} to ${p.to} · Late = scan more than ${d.settings.graceMinutes} minutes after the scheduled start · Excused leave is not counted absent`,
+    2 + days.length + 4);
+  headerRow(ws, 4, ['Teacher', 'Department', ...days, 'Scheduled', 'Attended', 'Late', 'Absent']);
 
   let r = 5;
   const teachers = [...d.teachers].sort((a, b) => a.lastName.localeCompare(b.lastName));
   for (const t of teachers) {
-    const mySlots = slots.filter(s => s.teacherId === t.id);
+    const c = totals.get(t.id) ?? { scheduled: 0, attended: 0, late: 0, absent: 0, excused: 0 };
     const dep = d.departments.find(x => x.id === t.departmentId);
     const rowVals: CellVal[] = [`${t.lastName}, ${t.firstName}`, dep ? dep.name : ''];
-    let scheduled = 0, attended = 0, late = 0, absent = 0;
-    for (const dt of schoolDays) {
-      const dowNum = dow(dt);
-      const daySlots = mySlots.filter(s => s.days.includes(dowNum));
-      let mark = '';
-      for (const s of daySlots) {
-        const m = markFor(d, s.id, dt, d.settings.graceMinutes, timeToMin(s.start));
-        if (m === 'P') { attended++; mark = 'P'; }
-        else if (m === 'L') { attended++; late++; mark = 'L'; }
-        else if (m === 'OL' || m === 'M') { mark = m; }
-        else { absent++; mark = 'A'; }
-      }
-      if (!mark) mark = '';
-      scheduled += daySlots.length;
-      rowVals.push(mark);
-      const cell = ws.getCell(r, rowVals.length);
-      const sf = statusFill(mark);
-      if (sf.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: sf.fill } };
-      cell.alignment = { horizontal: 'center' };
-    }
-    rowVals.push(scheduled, attended, late, absent);
-    ws.getRow(r).values = ['', ...rowVals];
+    const perDate = marksByTD.get(t.id);
+    const dayMarks = days.map(dt => dayMark(perDate?.get(dt) ?? []));
+    rowVals.push(...dayMarks, c.scheduled, c.attended, c.late, c.absent);
+    ws.getRow(r).values = rowVals;
+    dayMarks.forEach((mk, i) => fillMark(ws, r, 3 + i, mk));
     r++;
   }
-  ws.getRow(r).values = ['', '', `* Excused leave (OL/M) is excluded from the attendance rate.`];
-  ws.getCell(r, 3).font = { italic: true, size: 9, color: { argb: 'FF5E6E66' } };
+  const note = ws.getRow(r).getCell(3);
+  note.value = '* Excused leave (OL/M) is excluded from the attendance rate.';
+  note.font = { italic: true, size: 9, color: { argb: 'FF5E6E66' } };
 
   ws.columns.forEach(c => { c.width = 14; });
   ws.getColumn(1).width = 24;
@@ -145,49 +119,35 @@ async function teacherAttendanceWorkbook(
   const log = wb.addWorksheet('Daily log');
   titleBlock(log, 'Daily log', 'Every class meeting: date, section, subject, scheduled time, time in, minutes late, reason', 8);
   headerRow(log, 4, ['Date', 'Teacher', 'Section', 'Subject', 'Scheduled', 'Time in', 'Minutes late', 'Reason']);
-  let lr = 5;
-  for (const dt of schoolDays) {
-    const dowNum = dow(dt);
-    for (const s of d.slots.filter(s => s.days.includes(dowNum) && (!p.sectionId || s.sectionId === p.sectionId))) {
-      const t = d.teachers.find(x => x.id === s.teacherId);
-      const sec = d.sections.find(x => x.id === s.sectionId);
-      const ev = d.classEvents.find(e => e.slotId === s.id && e.date === dt);
-      const st = d.slotStatuses.find(x => x.id === `${s.id}|${dt}`);
-      const tIn = ev ? fmtTime(ev.ts) : '';
-      const late = ev ? Math.max(0, minsOf(ev.ts) - timeToMin(s.start)) : '';
-      const reason = st ? reasonLabel(st.reason) : (ev ? '' : 'No scan');
-      log.addRow([dt, t ? `${t.lastName}, ${t.firstName}` : '', sec ? sec.name : '', s.subject,
-        fmt12(s.start), tIn, late, reason]);
-      lr++;
-    }
+  for (const o of occs) {
+    const s = o.slot;
+    const t = d.teachers.find(x => x.id === s.teacherId);
+    const sec = d.sections.find(x => x.id === s.sectionId);
+    const ev = d.classEvents.find(e => e.slotId === s.id && e.date === o.date);
+    const st = d.slotStatuses.find(x => x.id === `${s.id}|${o.date}`);
+    log.addRow([o.date, t ? `${t.lastName}, ${t.firstName}` : '', sec ? sec.name : '', s.subject,
+      fmt12(s.start), ev ? fmtTime(ev.ts) : '', lateMinutes(ev?.ts, s.start, d.settings.graceMinutes),
+      st ? reasonLabel(st.reason) : (ev ? '' : 'No scan')]);
   }
   log.columns.forEach(c => { c.width = 16; });
 
   // By section sheet
   const bySec = wb.addWorksheet('By section');
-  titleBlock(bySec, 'Attendance by section', 'How often each teacher attended each section', 6);
+  titleBlock(bySec, 'Attendance by section', 'How often each teacher attended each section', 2 + d.sections.length + 2);
   headerRow(bySec, 4, ['Teacher', ...d.sections.map(s => s.name), 'Attended', 'Scheduled']);
   let br = 5;
   for (const t of teachers) {
     const vals: CellVal[] = [`${t.lastName}, ${t.firstName}`];
     let attended = 0, scheduled = 0;
     for (const sec of d.sections) {
-      const secSlots = d.slots.filter(s => s.teacherId === t.id && s.sectionId === sec.id);
-      let a = 0;
-      for (const s of secSlots) {
-        for (const dt of schoolDays) {
-          if (s.days.includes(dow(dt))) {
-            scheduled++;
-    const m = markFor(d, s.id, dt, d.settings.graceMinutes, timeToMin(s.start));
-            if (m === 'P' || m === 'L') a++;
-          }
-        }
-      }
+      const rows = occs.filter(o => o.slot.teacherId === t.id && o.slot.sectionId === sec.id);
+      const a = rows.filter(o => o.mark === 'P' || o.mark === 'L').length;
       vals.push(a);
       attended += a;
+      scheduled += rows.length;
     }
     vals.push(attended, scheduled);
-    bySec.getRow(br).values = ['', ...vals];
+    bySec.getRow(br).values = vals;
     br++;
   }
   bySec.columns.forEach(c => { c.width = 18; });
@@ -197,90 +157,57 @@ async function teacherAttendanceWorkbook(
 }
 
 async function teacherIndividualWorkbook(
-  d: AppData, wb: ExcelJS.Workbook, days: string[], p: ReportParams
+  d: AppData, wb: ExcelJS.Workbook, p: ReportParams
 ): Promise<{ buffer: Buffer; filename: string }> {
   const teacher = d.teachers.find(t => t.id === p.teacherId);
   if (!teacher) throw new Error('Teacher not found');
   const dep = d.departments.find(x => x.id === teacher.departmentId);
-  const dow = (dt: string) => new Date(dt + 'T00:00:00').getDay();
-  const schoolDays = days.filter(dt => dow(dt) >= 1 && dow(dt) <= 5);
-  const mySlots = d.slots.filter(s => s.teacherId === teacher.id);
+  const occs = teacherOccurrences(d, p.from, p.to, teacher.id);
+  const c = countMarks(occs);
 
   const ws = wb.addWorksheet('Summary');
   titleBlock(ws, `${teacher.firstName} ${teacher.lastName} · Attendance to class`,
-    `${dep ? dep.name : ''} · ${p.from} to ${p.to} · Late = scan more than ${grace(d)} min after start`, 8);
-
-  let scheduled = 0, attended = 0, late = 0, absent = 0;
-  const perWeek = new Map<string, { s: number; a: number; l: number; ab: number }>();
-  const perMonth = new Map<string, { s: number; a: number; l: number; ab: number }>();
-  const perTerm = new Map<string, { s: number; a: number; l: number; ab: number }>();
-  const bump = (m: Map<string, { s: number; a: number; l: number; ab: number }>, k: string, x: { s: number; a: number; l: number; ab: number }) => {
-    const cur = m.get(k) || { s: 0, a: 0, l: 0, ab: 0 };
-    cur.s += x.s; cur.a += x.a; cur.l += x.l; cur.ab += x.ab;
-    m.set(k, cur);
-  };
-
-  for (const s of mySlots) {
-    for (const dt of schoolDays) {
-      if (!s.days.includes(dow(dt))) continue;
-      scheduled++;
-      const m = markFor(d, s.id, dt, d.settings.graceMinutes, timeToMin(s.start));
-      const rec = { s: 1, a: m === 'P' || m === 'L' ? 1 : 0, l: m === 'L' ? 1 : 0, ab: m === 'A' ? 1 : 0 };
-      attended += rec.a; late += rec.l; absent += rec.ab;
-      const wk = weekKey(dt), mo = dt.slice(0, 7);
-      bump(perWeek, wk, rec);
-      bump(perMonth, mo, rec);
-      const term = d.settings.terms.find(t => dt >= t.start && dt <= t.end);
-      if (term) bump(perTerm, term.name, rec);
-    }
-  }
+    `${dep ? dep.name : ''} · ${p.from} to ${p.to} · Late = scan more than ${d.settings.graceMinutes} min after start`, 8);
 
   headerRow(ws, 4, ['Metric', 'Value']);
   const addStat = (label: string, v: CellVal) => { ws.addRow([, label, v]); };
-  addStat('Classes scheduled', scheduled);
-  addStat('Attended', attended);
-  addStat('Late', late);
-  addStat('Absent (unexcused)', absent);
-  const rate = scheduled ? Math.round(((attended) / scheduled) * 100) : 0;
-  addStat('Attendance rate', `${rate}%`);
-  const puncture = attended ? Math.round(((attended - late) / attended) * 100) : 0;
-  addStat('Punctuality rate', `${puncture}%`);
+  addStat('Classes scheduled', c.scheduled);
+  addStat('Attended', c.attended);
+  addStat('Late', c.late);
+  addStat('Absent (unexcused)', c.absent);
+  addStat('Attendance rate', `${c.scheduled ? Math.round((c.attended / c.scheduled) * 100) : 0}%`);
+  addStat('Punctuality rate', `${c.attended ? Math.round(((c.attended - c.late) / c.attended) * 100) : 0}%`);
 
   const freq = wb.addWorksheet('Frequency');
   titleBlock(freq, 'Frequency', 'Attendance to class per week / month / term', 6);
   headerRow(freq, 4, ['Period', 'Scheduled', 'Attended', 'Late', 'Absent', 'Rate']);
   let fr = 5;
-  for (const [k, v] of perWeek) {
-    freq.getCell(fr, 1).value = k;
-    fillFreq(freq, fr, v);
-    fr++;
-  }
-  for (const [k, v] of perMonth) {
-    freq.getCell(fr, 1).value = k;
-    fillFreq(freq, fr, v);
-    fr++;
-  }
-  for (const [k, v] of perTerm) {
-    freq.getCell(fr, 1).value = k;
-    fillFreq(freq, fr, v);
-    fr++;
-  }
+  const writeBuckets = (m: Map<string, MarkCounts>): void => {
+    for (const [k, v] of m) {
+      freq.getCell(fr, 1).value = k;
+      fillFreq(freq, fr, v);
+      fr++;
+    }
+  };
+  writeBuckets(bucketByKey(occs, o => weekKey(o.date)));
+  writeBuckets(bucketByKey(occs, o => o.date.slice(0, 7)));
+  writeBuckets(bucketByKey(
+    occs.filter(o => d.settings.terms.some(t => o.date >= t.start && o.date <= t.end)),
+    o => d.settings.terms.find(t => o.date >= t.start && o.date <= t.end)!.name));
   freq.columns.forEach(c => { c.width = 16; });
 
   const log = wb.addWorksheet('Daily log');
   titleBlock(log, 'Daily log', 'Every class: date, section, subject, scheduled, time in, minutes late, reason', 8);
   headerRow(log, 4, ['Date', 'Section', 'Subject', 'Scheduled', 'Time in', 'Minutes late', 'Reason', 'Status']);
-  for (const s of mySlots) {
-    for (const dt of schoolDays) {
-      if (!s.days.includes(dow(dt))) continue;
-      const sec = d.sections.find(x => x.id === s.sectionId);
-      const ev = d.classEvents.find(e => e.slotId === s.id && e.date === dt);
-      const st = d.slotStatuses.find(x => x.id === `${s.id}|${dt}`);
-      const m = markFor(d, s.id, dt, d.settings.graceMinutes, timeToMin(s.start));
-      log.addRow([dt, sec ? sec.name : '', s.subject, fmt12(s.start),
-        ev ? fmtTime(ev.ts) : '', ev ? Math.max(0, minsOf(ev.ts) - timeToMin(s.start)) : '',
-        st ? reasonLabel(st.reason) : (ev ? '' : 'No scan'), m === 'OL' ? 'Excused' : m === 'M' ? 'Excused (meeting)' : m]);
-    }
+  for (const o of occs) {
+    const s = o.slot;
+    const sec = d.sections.find(x => x.id === s.sectionId);
+    const ev = d.classEvents.find(e => e.slotId === s.id && e.date === o.date);
+    const st = d.slotStatuses.find(x => x.id === `${s.id}|${o.date}`);
+    log.addRow([o.date, sec ? sec.name : '', s.subject, fmt12(s.start),
+      ev ? fmtTime(ev.ts) : '', lateMinutes(ev?.ts, s.start, d.settings.graceMinutes),
+      st ? reasonLabel(st.reason) : (ev ? '' : 'No scan'),
+      o.mark === 'OL' ? 'Excused' : o.mark === 'M' ? 'Excused (meeting)' : o.mark]);
   }
   log.columns.forEach(c => { c.width = 16; });
 
@@ -290,10 +217,8 @@ async function teacherIndividualWorkbook(
 }
 
 async function studentAttendanceWorkbook(
-  d: AppData, wb: ExcelJS.Workbook, days: string[], p: ReportParams
+  d: AppData, wb: ExcelJS.Workbook, schoolDays: string[], p: ReportParams
 ): Promise<{ buffer: Buffer; filename: string }> {
-  const dow = (dt: string) => new Date(dt + 'T00:00:00').getDay();
-  const schoolDays = days.filter(dt => dow(dt) >= 1 && dow(dt) <= 5);
   const ws = wb.addWorksheet('Summary');
   titleBlock(ws, `${d.settings.schoolName} · Student attendance`,
     `${p.from} to ${p.to} · Present = any arrival scan on the day`, 8);
@@ -307,17 +232,21 @@ async function studentAttendanceWorkbook(
     for (const st of studs) {
       let present = 0, absent = 0;
       const vals: CellVal[] = [`${st.lastName}, ${st.firstName}`, sec.name, st.sex];
-      for (let di = 0; di < schoolDays.length; di++) {
-        const dt = schoolDays[di];
+      const marks: string[] = [];
+      for (const dt of schoolDays) {
         const cameIn = d.attendance.some(e => e.studentId === st.id && e.date === dt && e.kind === 'in');
+        marks.push(cameIn ? 'P' : 'A');
         vals.push(cameIn ? 'P' : 'A');
         if (cameIn) present++; else absent++;
-        const cell = ws.getCell(r, 5 + di);
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cameIn ? SOFT : RED } };
-        cell.alignment = { horizontal: 'center' };
       }
       vals.push(present, absent, `${Math.round((present / Math.max(1, schoolDays.length)) * 100)}%`);
-      ws.getRow(r).values = ['', ...vals];
+      ws.getRow(r).values = vals;
+      // Paint after the values: assigning row.values resets cell style.
+      marks.forEach((m, di) => {
+        const cell = ws.getCell(r, 4 + di);
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: m === 'P' ? SOFT : RED } };
+        cell.alignment = { horizontal: 'center' };
+      });
       r++;
     }
   }
@@ -330,10 +259,8 @@ async function studentAttendanceWorkbook(
 }
 
 async function studentPunctualityWorkbook(
-  d: AppData, wb: ExcelJS.Workbook, days: string[], p: ReportParams
+  d: AppData, wb: ExcelJS.Workbook, schoolDays: string[], p: ReportParams
 ): Promise<{ buffer: Buffer; filename: string }> {
-  const dow = (dt: string) => new Date(dt + 'T00:00:00').getDay();
-  const schoolDays = days.filter(dt => dow(dt) >= 1 && dow(dt) <= 5);
   const ws = wb.addWorksheet('Summary');
   titleBlock(ws, `${d.settings.schoolName} · Student punctuality`,
     `${p.from} to ${p.to} · Early before ${d.settings.earlyCutoff} · On time until ${d.settings.lateAfter} · Late after`, 8);
@@ -358,7 +285,7 @@ async function studentPunctualityWorkbook(
       }
       const total = early + onTime + late + absent;
       const rate = total ? Math.round(((early + onTime) / total) * 100) : 0;
-      ws.getRow(r).values = ['', `${st.lastName}, ${st.firstName}`, sec.name, early, onTime, late, absent, `${rate}%`];
+      ws.getRow(r).values = [`${st.lastName}, ${st.firstName}`, sec.name, early, onTime, late, absent, `${rate}%`];
       r++;
     }
   }
@@ -372,15 +299,26 @@ async function studentPunctualityWorkbook(
 
 // ---------- helpers ----------
 
-function fillFreq(ws: ExcelJS.Worksheet, r: number, v: { s: number; a: number; l: number; ab: number }): void {
-  const rate = v.s ? Math.round((v.a / v.s) * 100) : 0;
-  ws.getCell(r, 2).value = v.s;
-  ws.getCell(r, 3).value = v.a;
-  ws.getCell(r, 4).value = v.l;
-  ws.getCell(r, 5).value = v.ab;
+function fillFreq(ws: ExcelJS.Worksheet, r: number, v: MarkCounts): void {
+  const rate = v.scheduled ? Math.round((v.attended / v.scheduled) * 100) : 0;
+  ws.getCell(r, 2).value = v.scheduled;
+  ws.getCell(r, 3).value = v.attended;
+  ws.getCell(r, 4).value = v.late;
+  ws.getCell(r, 5).value = v.absent;
   ws.getCell(r, 6).value = `${rate}%`;
   const fill = rate >= 95 ? SOFT : rate >= 85 ? YELLOW : RED;
   ws.getCell(r, 6).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fill } };
+}
+
+/**
+ * "Minutes late" for the daily logs: blank when there is no scan, 0 when the
+ * scan was within the grace period, otherwise the minutes after start — the
+ * same threshold markFor uses, so the log can never contradict the Summary.
+ */
+function lateMinutes(ts: number | undefined, start: string, grace: number): number | '' {
+  if (!ts) return '';
+  const diff = minsOf(ts) - timeToMin(start);
+  return diff > grace ? diff : 0;
 }
 
 function reasonLabel(reason: string | null | undefined): string {
@@ -413,16 +351,4 @@ function fmt12(t: string): string {
   const ampm = h >= 12 ? 'PM' : 'AM';
   const hh = h % 12 === 0 ? 12 : h % 12;
   return `${hh}:${String(m).padStart(2, '0')} ${ampm}`;
-}
-
-function grace(d: AppData): number {
-  return d.settings.graceMinutes;
-}
-
-function weekKey(dt: string): string {
-  const d0 = new Date(dt + 'T00:00:00');
-  const day = (d0.getDay() + 6) % 7; // Mon=0
-  const monday = new Date(d0);
-  monday.setDate(d0.getDate() - day);
-  return `Week of ${monday.toISOString().slice(0, 10)}`;
 }

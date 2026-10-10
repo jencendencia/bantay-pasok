@@ -199,8 +199,9 @@ function createBrowserFallback(): BantayApi {
     onWinState(_cb) {
       return () => {};
     },
-    async buildReport(params) {
-      return { ok: true, data: { saved: true, filename: `Attendance_Report_${params.from}_${params.to}.xlsx` } };
+    async buildReport(_params) {
+      // No ExcelJS or save dialog in the browser: claim nothing was saved.
+      return { ok: false, error: 'Excel reports are only available in the desktop app' };
     },
     async addAnnouncement(a) {
       const d = loadLocal();
