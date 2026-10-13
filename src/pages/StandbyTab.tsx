@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal } from '../ui';
+import { alertDialog, Modal } from '../ui';
 import { visibleAnnouncements, pickRotating } from '../shared/announce';
 
 import type { Announcement } from '../shared/types';
@@ -9,6 +9,7 @@ import type { Announcement } from '../shared/types';
 export default function StandbyTab(): React.ReactElement {
   const { data, refresh } = useData();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<Announcement | null>(null);
   if (!data) return <div className="empty">Loading…</div>;
 
   const s = data.settings;
@@ -90,6 +91,7 @@ export default function StandbyTab(): React.ReactElement {
                   <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>{a.from} → {a.to}</div>
                 </div>
                 <input type="checkbox" checked={a.enabled} onChange={() => void toggle(a)} />
+                <button className="btn ghost small" onClick={() => setEditing(a)} aria-label={`Edit ${a.title}`} title="Edit announcement">Edit</button>
                 <button className="btn ghost small" onClick={async () => {
                   await api.patchData({ announcements: data.announcements.filter(x => x.id !== a.id) });
                   void refresh();
@@ -114,13 +116,31 @@ export default function StandbyTab(): React.ReactElement {
         </div>
       </div>
 
-      {adding && (
-        <NewAnnouncement
-          onClose={() => setAdding(false)}
-          onAdd={async a => {
-            await api.patchData({ announcements: [...data.announcements, a] });
-            void refresh();
+      {(adding || editing) && (
+        <AnnouncementForm
+          key={editing?.id ?? 'new'}
+          initial={editing ?? undefined}
+          onClose={() => {
             setAdding(false);
+            setEditing(null);
+          }}
+          onSave={async announcement => {
+            const announcements = editing
+              ? data.announcements.map(a => a.id === editing.id ? announcement : a)
+              : [...data.announcements, announcement];
+            try {
+              const result = await api.patchData({ announcements });
+              if (!result.ok) {
+                await alertDialog(result.error ?? 'Could not save the announcement.');
+                return;
+              }
+            } catch (error) {
+              await alertDialog(error instanceof Error ? error.message : 'Could not save the announcement.');
+              return;
+            }
+            await refresh();
+            setAdding(false);
+            setEditing(null);
           }}
         />
       )}
@@ -224,28 +244,49 @@ function isoDay(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function NewAnnouncement({ onClose, onAdd }: { onClose: () => void; onAdd: (a: Announcement) => void }): React.ReactElement {
-  const [type, setType] = useState<'text' | 'photo' | 'video'>('text');
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [from, setFrom] = useState(isoDay(new Date()));
-  const [to, setTo] = useState(isoDay(new Date()));
-  const [photo, setPhoto] = useState<string | undefined>();
-  const [video, setVideo] = useState<string | undefined>();
-  const [videoName, setVideoName] = useState('');
-  const [postedBy, setPostedBy] = useState("Principal's Office");
+function AnnouncementForm({ initial, onClose, onSave }: {
+  initial?: Announcement;
+  onClose: () => void;
+  onSave: (a: Announcement) => Promise<void>;
+}): React.ReactElement {
+  const [type, setType] = useState<'text' | 'photo' | 'video'>(initial?.type ?? 'text');
+  const [title, setTitle] = useState(initial?.title ?? '');
+  const [body, setBody] = useState(initial?.body ?? '');
+  const [from, setFrom] = useState(initial?.from ?? isoDay(new Date()));
+  const [to, setTo] = useState(initial?.to ?? isoDay(new Date()));
+  const [photo, setPhoto] = useState<string | undefined>(initial?.photoData);
+  const [video, setVideo] = useState<string | undefined>(initial?.videoData);
+  const [postedBy, setPostedBy] = useState(initial?.postedBy ?? "Principal's Office");
+  const [saving, setSaving] = useState(false);
+  const [fileError, setFileError] = useState('');
+
+  const readFile = (file: File, setValue: (value: string) => void): void => {
+    setFileError('');
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setFileError('Could not read the selected file.');
+        return;
+      }
+      setValue(reader.result);
+    };
+    reader.onerror = () => setFileError('Could not read the selected file.');
+    reader.readAsDataURL(file);
+  };
 
   return (
-    <Modal title="New announcement" onClose={onClose} width={560}>
+    <Modal title={initial ? 'Edit announcement' : 'New announcement'} onClose={onClose} width={560}>
       <div className="segmented" style={{ marginBottom: 14 }}>
         <button className={type === 'text' ? 'active' : ''} onClick={() => setType('text')}>Text</button>
         <button className={type === 'photo' ? 'active' : ''} onClick={() => setType('photo')}>Photo</button>
         <button className={type === 'video' ? 'active' : ''} onClick={() => setType('video')}>Video</button>
       </div>
       <div className="field"><label>Title</label><input value={title} onChange={e => setTitle(e.target.value)} /></div>
-      {type === 'text' ? (
-        <div className="field"><label>Message</label><textarea rows={4} value={body} onChange={e => setBody(e.target.value)} /></div>
-      ) : type === 'video' ? (
+      <div className="field">
+        <label>{type === 'text' ? 'Message' : 'Caption (optional)'}</label>
+        <textarea rows={4} value={body} onChange={e => setBody(e.target.value)} />
+      </div>
+      {type === 'video' ? (
         <div className="field">
           <label>Video file (MP4 / WebM — plays with sound on the standby screen)</label>
           <input
@@ -254,9 +295,7 @@ function NewAnnouncement({ onClose, onAdd }: { onClose: () => void; onAdd: (a: A
             onChange={e => {
               const f = e.target.files?.[0];
               if (!f) return;
-              const r = new FileReader();
-              r.onload = () => { setVideo(String(r.result)); setVideoName(f.name); };
-              r.readAsDataURL(f);
+              readFile(f, setVideo);
             }}
           />
           {video && <video src={video} controls muted style={{ maxWidth: 260, borderRadius: 8, marginTop: 8, background: '#000' }} />}
@@ -267,13 +306,12 @@ function NewAnnouncement({ onClose, onAdd }: { onClose: () => void; onAdd: (a: A
           <input type="file" accept="image/*" onChange={e => {
             const f = e.target.files?.[0];
             if (!f) return;
-            const r = new FileReader();
-            r.onload = () => setPhoto(String(r.result));
-            r.readAsDataURL(f);
+            readFile(f, setPhoto);
           }} />
           {photo && <img src={photo} alt="preview" style={{ maxWidth: 240, borderRadius: 8, marginTop: 8 }} />}
         </div>
       )}
+      {fileError && <div className="notice error" role="alert">{fileError}</div>}
       <div className="form-row">
         <div className="field"><label>Show from</label><input type="date" value={from} onChange={e => setFrom(e.target.value)} /></div>
         <div className="field"><label>Until</label><input type="date" value={to} onChange={e => setTo(e.target.value)} /></div>
@@ -281,11 +319,20 @@ function NewAnnouncement({ onClose, onAdd }: { onClose: () => void; onAdd: (a: A
       <div className="field"><label>Posted by</label><input value={postedBy} onChange={e => setPostedBy(e.target.value)} /></div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" disabled={!title || (type === 'photo' && !photo) || (type === 'video' && !video)}
-          onClick={() => onAdd({
-            id: `ann_${Date.now().toString(36)}`,
-            type, title, body, photoData: photo, videoData: video, from, to, enabled: true, postedBy
-          })}>Add announcement</button>
+        <button className="btn primary" disabled={saving || !title.trim() || (type === 'photo' && !photo) || (type === 'video' && !video)}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await onSave({
+                ...initial,
+                id: initial?.id ?? `ann_${Date.now().toString(36)}`,
+                type, title: title.trim(), body, photoData: photo, videoData: video, from, to,
+                enabled: initial?.enabled ?? true, postedBy
+              });
+            } finally {
+              setSaving(false);
+            }
+          }}>{saving ? 'Saving…' : initial ? 'Save changes' : 'Add announcement'}</button>
       </div>
     </Modal>
   );
