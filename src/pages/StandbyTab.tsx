@@ -195,7 +195,6 @@ function PreviewCard(): React.ReactElement {
         <div style={{ height: 6, background: 'var(--yellow)', borderRadius: 999, width: '40%', margin: '8px auto 0' }} />
         {current?.type === 'text' && (
           <div className="announce-card" style={{ margin: '20px auto 0', maxWidth: 460 }}>
-            <h4 style={{ fontSize: 17 }}>{current.title}</h4>
             <p style={{ fontSize: 13 }}>{current.body}</p>
             <div className="posted">Posted by {current.postedBy}</div>
           </div>

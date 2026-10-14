@@ -252,7 +252,6 @@ export default function ScannerApp(): React.ReactElement {
             )}
             {currentFS?.type === 'text' && (
               <div className="announce-text-slide">
-                <h2>{currentFS.title}</h2>
                 {currentFS.body && <p>{currentFS.body}</p>}
                 <div className="posted">Posted by {currentFS.postedBy}</div>
               </div>
@@ -260,10 +259,11 @@ export default function ScannerApp(): React.ReactElement {
             {currentFS?.type === 'photo' && currentFS.photoData && (
               <>
                 <img key={currentFS.id} className="announce-media photo" src={currentFS.photoData} alt={currentFS.title} />
-                <div className="announce-media-overlay">
-                  <div className="am-title">{currentFS.title}</div>
-                  {currentFS.body && <div className="am-caption">{currentFS.body}</div>}
-                </div>
+                {currentFS.body && (
+                  <div className="announce-media-overlay">
+                    <div className="am-caption">{currentFS.body}</div>
+                  </div>
+                )}
               </>
             )}
             {currentFS?.type === 'video' && currentFS.videoData && (
@@ -278,10 +278,11 @@ export default function ScannerApp(): React.ReactElement {
                   onEnded={advanceRotation}
                   onError={advanceRotation}
                 />
-                <div className="announce-media-overlay">
-                  <div className="am-title">{currentFS.title}</div>
-                  {currentFS.body && <div className="am-caption">{currentFS.body}</div>}
-                </div>
+                {currentFS.body && (
+                  <div className="announce-media-overlay">
+                    <div className="am-caption">{currentFS.body}</div>
+                  </div>
+                )}
               </>
             )}
           </div>

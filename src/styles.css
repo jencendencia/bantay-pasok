@@ -1083,9 +1083,6 @@ input, select, textarea { font: inherit; color: inherit; }
 }
 .announce-stage .standby-greet { margin: 0; }
 .announce-text-slide { text-align: center; padding: 40px 60px; max-width: 900px; }
-.announce-text-slide h2 {
-  font-family: 'Playfair Display', Georgia, serif; font-size: 44px; margin: 0 0 14px;
-}
 .announce-text-slide p { font-size: 20px; line-height: 1.5; color: #d9e8df; margin: 0 0 16px; }
 .announce-text-slide .posted { color: #a4c4b5; font-size: 13px; }
 .announce-media { width: 100%; height: 100%; object-fit: contain; display: block; }
@@ -1096,7 +1093,6 @@ input, select, textarea { font: inherit; color: inherit; }
   background: linear-gradient(transparent, rgba(4, 22, 17, 0.85));
   text-align: center; pointer-events: none;
 }
-.am-title { font-weight: 800; font-size: 22px; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
 .am-caption { font-size: 14px; color: #d9e8df; margin-top: 2px; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
 .announce-bottom {
   flex: none; display: flex; align-items: center; gap: 16px;
