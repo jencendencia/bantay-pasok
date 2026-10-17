@@ -1,0 +1,40 @@
+{
+  "appId": "com.bantaypasok.attendance",
+  "productName": "Swiped Perfectly Just-in-time",
+  "electronVersion": "22.3.27",
+  "directories": {
+    "output": "release-win7",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*",
+    "package.json"
+  ],
+  "asarUnpack": [
+    "node_modules/serialport/**",
+    "node_modules/@serialport/**",
+    "node_modules/better-sqlite3/**"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "build/icon.png",
+    "signAndEditExecutable": false
+  },
+  "publish": null,
+  "nsis": {
+    "oneClick": false,
+    "perMachine": true,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "runAfterFinish": true,
+    "shortcutName": "Swiped Perfectly Just-in-time",
+    "artifactName": "SwipedPerfectlyJustInTime.Setup.${version}.win7.${ext}"
+  }
+}

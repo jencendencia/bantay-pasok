@@ -191,7 +191,23 @@ async function main() {
   // 9. ID-card batch ZIP (src/shared/zip.ts) — structure and CRCs verified
   //    with Node's own zlib.crc32, an implementation independent of ours.
   const { zipStore } = require('../dist-electron/shared/zip.js');
-  const { crc32: nodeCrc32 } = require('node:zlib');
+  // zlib.crc32 exists only in Node >= 20.15; on older runtimes (e.g. Electron
+  // 22 / Node 16.17, used for the Windows 7 build) fall back to an independent
+  // reference-table CRC32 so the cross-check stays just as strict.
+  let { crc32: nodeCrc32 } = require('node:zlib');
+  if (typeof nodeCrc32 !== 'function') {
+    const table = [];
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+      table[n] = c >>> 0;
+    }
+    nodeCrc32 = (buf) => {
+      let c = 0xffffffff;
+      for (let i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+  }
   const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 74, 70, 70, 0]);
   const txt = new TextEncoder().encode('id card batch');
   const zip = zipStore([{ name: 'A_S-1.jpg', data: jpg }, { name: 'B_S-2.jpg', data: txt }]);
