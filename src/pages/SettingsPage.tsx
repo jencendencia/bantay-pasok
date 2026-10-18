@@ -5,7 +5,7 @@ import type { DbConfigView } from '../api';
 import { Modal, Pill, confirmDialog } from '../ui';
 import { hashPassword } from '../shared/seed';
 import { monogramOf } from '../shared/constants';
-import type { Settings, User, UpdateStatusInfo } from '../shared/types';
+import type { Settings, User, UpdateStatusInfo, NetConfig, NetStatus } from '../shared/types';
 
 export default function SettingsPage(): React.ReactElement {
   const { data, refresh } = useData();
@@ -21,6 +21,11 @@ export default function SettingsPage(): React.ReactElement {
   const [dbForm, setDbForm] = useState<DbConfigView | null>(null);
   const [dbMsg, setDbMsg] = useState<string | null>(null);
   const [dbBusy, setDbBusy] = useState(false);
+  const [net, setNet] = useState<NetStatus | null>(null);
+  const [netHost, setNetHost] = useState('');
+  const [netMsg, setNetMsg] = useState<string | null>(null);
+  const [netBusy, setNetBusy] = useState(false);
+  const [mode, setMode] = useState<'local' | 'lan'>('local');
   const [upd, setUpd] = useState<UpdateStatusInfo | null>(null);
   const [updBusy, setUpdBusy] = useState(false);
   const [tokenMsg, setTokenMsg] = useState<string | null>(null);
@@ -40,8 +45,21 @@ export default function SettingsPage(): React.ReactElement {
       if (res.ok && res.data) {
         setDbState({ enabled: res.data.enabled, lastError: res.data.lastError });
         setDbForm(res.data.config);
+        if (res.data.net) {
+          setNet(res.data.net);
+          setMode(res.data.net.mode);
+          if (res.data.net.host) setNetHost(res.data.net.host);
+        }
       }
     })();
+  }, []);
+  // Keep the network pill live: reachable/offline flips as the poller in the
+  // main process probes the host, and shareActive tracks the sharing server.
+  React.useEffect(() => {
+    const t = setInterval(() => {
+      void api.dbStatus().then(res => { if (res.ok && res.data?.net) setNet(res.data.net); });
+    }, 5000);
+    return () => clearInterval(t);
   }, []);
   // Edits stay in a local draft until "Save changes"; the effect re-syncs the draft whenever
   // saved data changes (initial load, or after a save round-trips through the store → SQLite).
@@ -54,6 +72,71 @@ export default function SettingsPage(): React.ReactElement {
   const setS = (patch: Partial<Settings>): void => {
     setDraft(d => ({ ...(d ?? data.settings), ...patch }));
     setDirty(true);
+  };
+
+  const refreshNet = async (): Promise<void> => {
+    const res = await api.dbStatus();
+    if (res.ok && res.data) {
+      setDbState({ enabled: res.data.enabled, lastError: res.data.lastError });
+      if (res.data.net) setNet(res.data.net);
+    }
+  };
+
+  /** Radio: go back to this computer's own database (restores SQLite + GSM). */
+  const switchToLocal = async (): Promise<void> => {
+    if (!net || net.mode === 'local') { setMode('local'); return; }
+    setNetBusy(true);
+    setNetMsg(null);
+    const res = await api.saveNetConfig({ ...net, mode: 'local' }, false);
+    setNetBusy(false);
+    if (res.ok && res.data?.ok) {
+      setMode('local');
+      setNetMsg(res.data.error ? `Saved, but sharing could not start: ${res.data.error}` : "Using this computer's database again.");
+    } else {
+      setNetMsg(res.data?.error ?? res.error ?? 'Failed to switch back.');
+    }
+    await refreshNet();
+  };
+
+  /** Tests the host first, then applies LAN mode only when it answers. */
+  const connectLan = async (): Promise<void> => {
+    if (!net) return;
+    const host = netHost.trim();
+    if (!host) { setNetMsg('Enter the IP address of the computer with the database.'); return; }
+    setNetBusy(true);
+    setNetMsg('Checking the connection…');
+    const cfg: NetConfig = { ...net, mode: 'lan', host };
+    const test = await api.saveNetConfig(cfg, true);
+    if (!(test.ok && test.data?.ok)) {
+      setNetMsg(test.data?.error ?? test.error ?? 'Cannot reach that computer.');
+      setNetBusy(false);
+      return;
+    }
+    const save = await api.saveNetConfig(cfg, false);
+    setNetBusy(false);
+    if (save.ok && save.data?.ok) {
+      setMode('lan');
+      setNetMsg(save.data.error
+        ? `Connected, but: ${save.data.error}`
+        : `Connected to ${host} — this computer now uses that database.`);
+    } else {
+      setNetMsg(save.data?.error ?? save.error ?? 'Failed to apply the setting.');
+    }
+    await refreshNet();
+  };
+
+  /** Host sharing toggle (Local Database page only). */
+  const setShare = async (share: boolean): Promise<void> => {
+    if (!net) return;
+    setNet({ ...net, share }); // instant visual feedback; refreshNet corrects on failure
+    const res = await api.saveNetConfig({ ...net, mode: 'local', share }, false);
+    if (!(res.ok && res.data?.ok)) setNetMsg(res.data?.error ?? res.error ?? 'Failed to save.');
+    else setNetMsg(res.data.error
+      ? `Sharing could not start: ${res.data.error}`
+      : share
+        ? "Sharing enabled — other computers on this network can now connect to this computer's IP."
+        : 'Sharing disabled.');
+    await refreshNet();
   };
 
   // Reads the chosen logo, downscaled to 512px so data.json and SQLite stay light.
@@ -98,9 +181,16 @@ export default function SettingsPage(): React.ReactElement {
 
   const saveAll = async (): Promise<void> => {
     setSaving(true);
-    await api.patchData({ settings: draft ?? data.settings, users: usersDraft ?? data.users });
+    const res = await api.patchData({ settings: draft ?? data.settings, users: usersDraft ?? data.users });
     await refresh();
     setSaving(false);
+    if (!res.ok) {
+      // Keep the dirty bar up so the user knows nothing was saved (e.g. the
+      // network database is unreachable).
+      setSavedFlash(false);
+      setNetMsg(res.error ?? 'Could not save — the network database may be unreachable.');
+      return;
+    }
     setDirty(false);
     setSavedFlash(true);
     window.setTimeout(() => setSavedFlash(false), 3200);
@@ -373,11 +463,45 @@ export default function SettingsPage(): React.ReactElement {
 
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>SQLite database</h3>
-              {dbState && <Pill color={dbState.enabled ? 'green' : 'gray'}>{dbState.enabled ? 'Connected' : 'Local JSON'}</Pill>}
+              <h3>Database</h3>
+              {net && net.mode === 'lan'
+                ? (
+                  <Pill color={net.reachable === false ? 'red' : 'green'}>
+                    {net.reachable === false ? `LAN · ${net.host} (offline)` : `LAN · ${net.host}`}
+                  </Pill>
+                )
+                : dbState && <Pill color={dbState.enabled ? 'green' : 'gray'}>{dbState.enabled ? 'Connected' : 'Local JSON'}</Pill>}
             </div>
-            {dbForm && (
+            {dbForm && net && (
               <>
+                <div className="field" style={{ margin: '10px 0 6px' }}>
+                  <label>Where this computer keeps the data</label>
+                  <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+                    <input
+                      type="radio"
+                      name="data-mode"
+                      checked={mode === 'local'}
+                      disabled={netBusy}
+                      onChange={() => void switchToLocal()}
+                    />
+                    This computer's database (SQLite, with JSON backup)
+                  </label>
+                  <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontWeight: 600, fontSize: 14 }}>
+                    <input
+                      type="radio"
+                      name="data-mode"
+                      checked={mode === 'lan'}
+                      disabled={netBusy}
+                      onChange={() => setMode('lan')}
+                    />
+                    Database of another computer on the network (LAN)
+                  </label>
+                </div>
+                <div className="card-note" style={{ marginBottom: 8 }}>
+                  The two computers share one database over the local network — for example the Windows 7 office PC as the main computer,
+                  and a second PC connecting to it by IP address.
+                </div>
+                {mode === 'local' ? (<>
                 <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontWeight: 600, fontSize: 14, margin: '10px 0' }}>
                   <input
                     type="checkbox"
@@ -450,6 +574,73 @@ export default function SettingsPage(): React.ReactElement {
                   Every save writes to data.json first, then syncs to the local SQLite database file — the kiosk keeps working even if the file is locked or moved.
                   Settings, holidays and borrowed classes are stored too. Turning this off keeps all data in the local JSON file.
                 </div>
+
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+                  <label style={{ display: 'flex', gap: 10, alignItems: 'center', fontWeight: 600, fontSize: 14, marginBottom: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={net.share}
+                      disabled={netBusy}
+                      onChange={e => void setShare(e.target.checked)}
+                    />
+                    Share this computer's database over the network
+                  </label>
+                  {net.share && (
+                    <div className="card-note">
+                      <b>Other computers on this network can connect to: </b>
+                      {net.ips.length > 0
+                        ? <b>{net.ips.join(', ')}</b>
+                        : <span style={{ color: 'var(--red)' }}>no network address found — is this PC connected to the network?</span>}
+                      {' '}(port {net.port}).
+                      <br />
+                      Windows may ask for firewall permission the first time sharing is turned on — choose <b>Allow access</b>.
+                      Set this PC to a fixed IP address so the other computer never loses it.
+                      <br />
+                      <b>Warning:</b> there is no password on this connection — anyone on this network who can reach that address can read and change the data.
+                      Leave sharing off on computers nobody connects to.
+                    </div>
+                  )}
+                </div>
+                {netMsg && <div className="card-note" style={{ marginTop: 8 }}>{netMsg}</div>}
+                </>) : (
+                <div>
+                  <div className="field">
+                    <label>IP address of the computer with the database (the main computer)</label>
+                    <input
+                      value={netHost}
+                      placeholder="192.168.1.10"
+                      disabled={netBusy}
+                      onChange={e => setNetHost(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') void connectLan(); }}
+                      style={{ maxWidth: 260 }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      className="btn primary small"
+                      disabled={netBusy || !netHost.trim()}
+                      onClick={() => void connectLan()}
+                    >
+                      {netBusy ? 'Connecting…' : 'Test and connect'}
+                    </button>
+                    {net.mode === 'lan' && (
+                      <Pill color={net.reachable === false ? 'red' : 'green'}>
+                        {net.reachable === false ? 'Offline' : net.reachable === null ? 'Checking…' : 'Connected'}
+                      </Pill>
+                    )}
+                  </div>
+                  {netMsg && <div className="card-note" style={{ marginTop: 8 }}>{netMsg}</div>}
+                  <div className="card-note" style={{ marginTop: 8 }}>
+                    On the main computer, turn on <b>Share this computer's database over the network</b> (Settings → Database) and enter its IP address above.
+                    Both computers must be on the same network (same router).
+                    While connected this computer keeps <b>no local database</b>: students, settings, scans and reports all live on the main computer,
+                    attendance times follow the main computer's clock, and parent SMS/email go out from its modem.
+                    {net.mode === 'lan' && net.reachable === false && net.error && (
+                      <span style={{ color: 'var(--red)', display: 'block' }}>{net.error}</span>
+                    )}
+                  </div>
+                </div>
+                )}
               </>
             )}
           </div>

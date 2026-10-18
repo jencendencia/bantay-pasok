@@ -62,6 +62,25 @@ Everything lives in a local SQLite database file — no server to install or con
 
 Use **Import data.json now** (Settings → SQLite database) to re-push the local file into SQLite at any time. The configuration is stored next to the data in `sqlite.json`.
 
+## Two computers on one network (LAN database)
+
+One computer can be the **main computer** (for example the office PC) while a second computer uses *the same database* over the local network — no extra database server to install, works with any mix of Windows versions (e.g. Windows 7 main + Windows 11 second).
+
+**Main computer (hosts the database):**
+
+1. Settings → Database → *Where this computer keeps the data* = **This computer's database** (the default).
+2. Turn on **Share this computer's database over the network**. The Settings card then shows this computer's IP address (port `39500`) — that is exactly what the other computer needs.
+3. Windows will ask for firewall permission the first time — choose **Allow access** (or open TCP port 39500 yourself). Give the PC a fixed IP address so the other computer never loses it.
+
+**Second computer (the client):**
+
+1. Settings → Database → choose **Database of another computer on the network (LAN)**.
+2. Enter the main computer's IP address (e.g. `192.168.1.10`) and click **Test and connect**.
+
+While in LAN mode the client computer keeps **no local database**: students, settings, users, scans and reports all read and write on the main computer; attendance times follow the main computer's clock; parent SMS/email go out from its modem; and a status pill plus a 3-second poll keep every window live. Switching back to *This computer's database* restores the local SQLite connection and GSM/SMTP loops. The choice is stored in `network.json` next to the data (`mode`, `host`, `share`, `port`).
+
+> **Security note:** the sharing protocol has **no password** (by design) — anyone on the same network who can reach that IP:port can read and change the data. Keep sharing off on computers nobody connects to, and keep the school network on a trusted router.
+
 ## Windows installer (deployment)
 
 Build the installer for school PCs:
@@ -80,4 +99,4 @@ npm run dist:dir       # unpacked folder only (faster, for quick testing)
 ## Notes
 
 - All data is stored in a local SQLite database (`bantay-pasok-data/bantay-pasok.db` under the app's user-data folder) with `data.json` kept as an automatic backup (see above).
-- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (25 checks: seed integrity, scan flows, per-section time rules, duplicate suppression, SMS queue, Excel reports, GSM retry). Storage: `npm run db:test` (SQLite sync round-trip).
+- Tests: `npm run build:electron && node scripts/smoke-test.cjs` (seed integrity, scan flows, per-section time rules, duplicate suppression, SMS queue, Excel reports, GSM retry). Storage: `npm run db:test` (SQLite sync round-trip). LAN sharing: `node scripts/lan-test.cjs` (host parser, server lifecycle, snapshot/mutation/login/scan routes, revision polling, protocol errors).

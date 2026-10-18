@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { Announcement, AppData, IpcResult, ReportParams, ScanResult, UpdateEvent, UpdateStatusInfo } from '../shared/types';
+import type { Announcement, AppData, IpcResult, NetConfig, NetStatus, ReportParams, ScanResult, UpdateEvent, UpdateStatusInfo } from '../shared/types';
 
 const api = {
   getData: (): Promise<IpcResult<AppData>> => ipcRenderer.invoke('data:get'),
@@ -28,10 +28,12 @@ const api = {
   addAnnouncement: (a: Announcement): Promise<IpcResult> => ipcRenderer.invoke('announce:add', a),
   removeAnnouncement: (id: string): Promise<IpcResult> => ipcRenderer.invoke('announce:remove', id),
   appInfo: (): Promise<IpcResult<{ dataDir: string; today: string; platform: string }>> => ipcRenderer.invoke('app:info'),
-  dbStatus: (): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: { enabled: boolean; file: string } }>> =>
+  dbStatus: (): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: { enabled: boolean; file: string }; net: NetStatus }>> =>
     ipcRenderer.invoke('db:status'),
   saveDbConfig: (cfg: { enabled: boolean; file: string }, testOnly: boolean): Promise<IpcResult<{ ok: boolean; version?: string; error?: string }>> =>
     ipcRenderer.invoke('db:saveConfig', cfg, testOnly),
+  saveNetConfig: (cfg: NetConfig, testOnly: boolean): Promise<IpcResult<{ ok: boolean; error?: string }>> =>
+    ipcRenderer.invoke('net:save', cfg, testOnly),
   dbConnect: (): Promise<IpcResult> => ipcRenderer.invoke('db:connect'),
   dbDisconnect: (): Promise<IpcResult> => ipcRenderer.invoke('db:disconnect'),
   dbImportJson: (): Promise<IpcResult> => ipcRenderer.invoke('db:importJson'),

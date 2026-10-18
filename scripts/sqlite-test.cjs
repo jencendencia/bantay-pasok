@@ -1,5 +1,9 @@
-// Standalone SQLite storage test (no Electron required).
+// Standalone SQLite storage test.
 // Usage: npm run db:test   (requires `npm run build:electron` first)
+//
+// Runs under Electron in ELECTRON_RUN_AS_NODE mode because better-sqlite3 is
+// compiled against Electron's ABI (the same binary the packaged app loads);
+// a plain `node` run would fail with NODE_MODULE_VERSION mismatch.
 //
 // Verifies the full storage pipeline against a throwaway database file:
 // config round-trip, schema creation, seed sync + load, row mappers,

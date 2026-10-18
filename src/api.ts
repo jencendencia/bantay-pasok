@@ -1,6 +1,6 @@
-import type { AppData, IpcResult, ReportParams, ScanResult, Announcement, UpdateEvent, UpdateStatusInfo } from './shared/types';
+import type { AppData, IpcResult, NetConfig, NetStatus, ReportParams, ScanResult, Announcement, UpdateEvent, UpdateStatusInfo } from './shared/types';
 import { buildSeedData, hashPassword } from './shared/seed';
-import { normalizeTerms } from './shared/constants';
+import { normalizeTerms, LAN_PORT } from './shared/constants';
 import { processScan } from './shared/scan';
 
 export interface DbConfigView {
@@ -27,8 +27,10 @@ export interface BantayApi {
   addAnnouncement(a: Announcement): Promise<IpcResult>;
   removeAnnouncement(id: string): Promise<IpcResult>;
   appInfo(): Promise<IpcResult<{ dataDir: string; today: string; platform: string }>>;
-  dbStatus(): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: DbConfigView }>>;
+  dbStatus(): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: DbConfigView; net: NetStatus }>>;
   saveDbConfig(cfg: DbConfigView, testOnly: boolean): Promise<IpcResult<{ ok: boolean; version?: string; error?: string }>>;
+  /** Test or apply the storage mode / network database settings (net:save IPC). */
+  saveNetConfig(cfg: NetConfig, testOnly: boolean): Promise<IpcResult<{ ok: boolean; error?: string }>>;
   dbConnect(): Promise<IpcResult>;
   dbDisconnect(): Promise<IpcResult>;
   dbImportJson(): Promise<IpcResult>;
@@ -224,12 +226,25 @@ function createBrowserFallback(): BantayApi {
         data: {
           enabled: false,
           lastError: null,
-          config: { enabled: false, file: '' }
+          config: { enabled: false, file: '' },
+          net: {
+            mode: 'local',
+            host: '',
+            share: false,
+            port: LAN_PORT,
+            shareActive: false,
+            ips: [],
+            reachable: null,
+            error: null
+          } satisfies NetStatus
         }
       };
     },
     async saveDbConfig(_cfg, _testOnly) {
       return { ok: false, error: 'SQLite is only available in the desktop app' } as IpcResult<{ ok: boolean; error?: string }>;
+    },
+    async saveNetConfig(_cfg, _testOnly) {
+      return { ok: false, error: 'Network storage is only available in the desktop app' } as IpcResult<{ ok: boolean; error?: string }>;
     },
     async dbConnect() {
       return { ok: false, error: 'SQLite is only available in the desktop app' };

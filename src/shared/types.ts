@@ -272,3 +272,32 @@ export interface IpcResult<T = unknown> {
   data?: T;
   error?: string;
 }
+
+/**
+ * Where the app keeps its data, configured in Settings → Database.
+ * `local`  — this computer's own SQLite/JSON storage (the default).
+ * `lan`    — a database hosted by another computer on the network; this
+ *             machine opens no local database and forwards every change.
+ * `share`  — host side: serve this computer's database to LAN clients.
+ */
+export interface NetConfig {
+  mode: 'local' | 'lan';
+  /** IPv4 address (or hostname) of the host computer; used when mode === 'lan'. */
+  host: string;
+  /** Serve this computer's database to other computers on the network. */
+  share: boolean;
+  /** TCP port of the sharing server (default LAN_PORT). */
+  port: number;
+}
+
+/** NetConfig plus live status for the Settings UI. */
+export interface NetStatus extends NetConfig {
+  /** True while the sharing server is actually listening on this machine. */
+  shareActive: boolean;
+  /** IPv4 addresses other computers can reach this machine on. */
+  ips: string[];
+  /** Client side: last known reachability of the host (null = never tried). */
+  reachable: boolean | null;
+  /** Client side: last connection error, or null when healthy. */
+  error: string | null;
+}

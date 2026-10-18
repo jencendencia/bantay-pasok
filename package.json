@@ -1,7 +1,7 @@
 {
   "name": "bantay-pasok",
   "productName": "Swiped Perfectly Just-in-time",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Swiped Perfectly Just-in-time — real-time teachers and students attendance monitoring with QR scanning and parent SMS",
   "main": "dist-electron/electron/main.js",
   "author": "Swiped Perfectly Just-in-time",
@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "npm run build && electron .",
     "icon": "node scripts/gen-icon.js",
-    "db:test": "node scripts/sqlite-test.cjs",
+    "db:test": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/sqlite-test.cjs",
     "dist:ia32": "npm run build && electron-builder --win --ia32",
     "dist:dir": "npm run build && electron-builder --win --dir",
     "dist": "npm run build && electron-builder --win"

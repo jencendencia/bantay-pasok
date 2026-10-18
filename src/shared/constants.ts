@@ -29,6 +29,9 @@ export const ABSENCE_REASONS = [
   { id: 'others', label: 'Others', hint: 'Type a note below' }
 ] as const;
 
+/** Fixed TCP port of the LAN sharing server (Settings → Database). Open it in the firewall on the host computer. */
+export const LAN_PORT = 39500;
+
 export const DEFAULT_SETTINGS: Settings = {
   schoolName: 'Mabuhay National High School',
   schoolLogo: '',

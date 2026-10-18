@@ -6,6 +6,8 @@ import { DEFAULT_SETTINGS, normalizeTerms } from '../shared/constants';
 import type { AppData, Settings } from '../shared/types';
 import { DbConnection, ensureSchema, loadDbConfig, saveDbConfig } from './db';
 import type { DbConfig } from './db';
+import { loadNetConfig, saveNetConfig } from './net';
+import type { NetConfig } from '../shared/types';
 
 const DATA_DIR = path.join(app.getPath('userData'), 'bantay-pasok-data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
@@ -15,6 +17,7 @@ let saveTimer: NodeJS.Timeout | null = null;
 
 const db = new DbConnection();
 let dbCfg: DbConfig = loadDbConfig(DATA_DIR);
+let netCfg: NetConfig = loadNetConfig(DATA_DIR);
 
 export function getDataDir(): string {
   return DATA_DIR;
@@ -24,7 +27,29 @@ export function getDbConfig(): DbConfig {
   return dbCfg;
 }
 
+export function getNetConfig(): NetConfig {
+  return netCfg;
+}
+
+export function setNetConfig(cfg: NetConfig): void {
+  netCfg = cfg;
+  saveNetConfig(DATA_DIR, cfg);
+}
+
+/** True when this computer uses another computer's database over the network. */
+export function isLanMode(): boolean {
+  return netCfg.mode === 'lan';
+}
+
 export async function initStore(): Promise<void> {
+  netCfg = loadNetConfig(DATA_DIR);
+  if (netCfg.mode === 'lan') {
+    // The database lives on another computer (Settings → Database): open no
+    // local storage at all and seed nothing — main.ts forwards every read and
+    // write to the host over the network.
+    data = null;
+    return;
+  }
   // Always make sure the JSON fallback file exists and is loadable.
   const json = loadJson();
 
@@ -144,6 +169,12 @@ export async function flushSave(): Promise<void> {
 
 export function loadData(): AppData {
   if (!data) {
+    if (netCfg.mode === 'lan') {
+      // Tripwire: in LAN mode every caller must reach the data through the
+      // network path in main.ts — silently returning the stale local JSON
+      // would let this computer write records that vanish.
+      throw new Error('LAN mode: this computer does not keep a local database.');
+    }
     // Synchronous fallback for early IPC before initStore completes.
     data = loadJson();
   }
