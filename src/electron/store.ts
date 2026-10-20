@@ -5,6 +5,7 @@ import { buildSeedData } from '../shared/seed';
 import { DEFAULT_SETTINGS, normalizeTerms } from '../shared/constants';
 import type { AppData, Settings } from '../shared/types';
 import { DbConnection, ensureSchema, loadDbConfig, saveDbConfig } from './db';
+import { dedupeTeacherQr } from '../shared/teacherQr';
 import type { DbConfig } from './db';
 import { loadNetConfig, saveNetConfig } from './net';
 import type { NetConfig } from '../shared/types';
@@ -63,10 +64,13 @@ export async function initStore(): Promise<void> {
       if (dbEmpty) {
         await db.sync(json);
         data = json;
-      } else {
-        data = fromDb;
-      }
-      return;
+    } else {
+      data = fromDb;
+      // SQLite is authoritative — run the same repairs as the JSON path (the
+      // pre-1.0.16 duplicate teacher QRs) and persist them.
+      if (repairData(data)) await flushSave();
+    }
+    return;
     } catch (err) {
       console.error('SQLite unavailable, falling back to JSON storage:', err);
       db.lastError = err instanceof Error ? err.message : String(err);
@@ -128,6 +132,10 @@ function repairData(d: AppData): boolean {
       seenStudents.add(key);
     }
   }
+  // v1.0.16: the teacher counter could reissue an already-taken code after a
+  // deletion (T-0041 and T-0065 each landed on two people). Keep the first
+  // holder of each code and give later duplicates a fresh free one.
+  if (dedupeTeacherQr(d.teachers)) changed = true;
   return changed;
 }
 
@@ -235,6 +243,7 @@ export async function connectSqlite(): Promise<{ ok: boolean; error?: string }> 
       data = loadJson();
     } else {
       data = fromDb;
+      if (repairData(data)) await flushSave();
     }
     return { ok: true };
   } catch (err) {

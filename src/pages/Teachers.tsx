@@ -6,6 +6,7 @@ import { fmt12, timeToMin, ABSENCE_REASONS } from '../shared/constants';
 import { IdCard, type IdCardProps } from '../components/IdCard';
 import { renderIdCardJpeg, downloadDataUrl, downloadIdCardsZip, type IdCardZipItem } from '../components/idCardImage';
 import type { AppData, Teacher, Slot } from '../shared/types';
+import { nextTeacherQr } from '../shared/teacherQr';
 
 /** The ID card for one teacher — the single definition behind preview, print and JPEG export. */
 function teacherIdCard(teacher: Teacher, data: AppData): IdCardProps {
@@ -575,7 +576,7 @@ function AddTeacherModal({ existing, onClose }: { existing?: Teacher; onClose: (
             } else {
               const t: Teacher = {
                 id: `t_${Date.now().toString(36)}`,
-                qr: `T-${String(data.teachers.length + 31).padStart(4, '0')}`,
+                qr: nextTeacherQr(data.teachers),
                 lastName: form.lastName,
                 firstName: form.firstName,
                 middleName: '',
