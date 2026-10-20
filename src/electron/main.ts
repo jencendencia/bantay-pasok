@@ -58,6 +58,9 @@ function createScannerWindow(): void {
   scanWin = new BrowserWindow({
     width: 1280,
     height: 800,
+    // Open on the whole display: fullscreen tracks the current screen size
+    // (resolution, scaling, orientation), so the standby screen always fits.
+    fullscreen: true,
     show: false,
     frame: false,
     backgroundColor: '#0e3a2f',
