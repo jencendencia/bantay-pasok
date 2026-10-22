@@ -28,7 +28,7 @@ const api = {
   addAnnouncement: (a: Announcement): Promise<IpcResult> => ipcRenderer.invoke('announce:add', a),
   removeAnnouncement: (id: string): Promise<IpcResult> => ipcRenderer.invoke('announce:remove', id),
   appInfo: (): Promise<IpcResult<{ dataDir: string; today: string; platform: string }>> => ipcRenderer.invoke('app:info'),
-  dbStatus: (): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: { enabled: boolean; file: string }; net: NetStatus }>> =>
+  dbStatus: (): Promise<IpcResult<{ enabled: boolean; lastError: string | null; sync: { pending: boolean; error: string | null; retryAt: number | null }; config: { enabled: boolean; file: string }; net: NetStatus }>> =>
     ipcRenderer.invoke('db:status'),
   saveDbConfig: (cfg: { enabled: boolean; file: string }, testOnly: boolean): Promise<IpcResult<{ ok: boolean; version?: string; error?: string }>> =>
     ipcRenderer.invoke('db:saveConfig', cfg, testOnly),
@@ -37,6 +37,8 @@ const api = {
   dbConnect: (): Promise<IpcResult> => ipcRenderer.invoke('db:connect'),
   dbDisconnect: (): Promise<IpcResult> => ipcRenderer.invoke('db:disconnect'),
   dbImportJson: (): Promise<IpcResult> => ipcRenderer.invoke('db:importJson'),
+  dbBackup: (): Promise<IpcResult<{ saved: boolean; filename: string; source: 'network' | 'local' }>> =>
+    ipcRenderer.invoke('db:backup'),
   updateStatus: (): Promise<IpcResult<UpdateStatusInfo>> => ipcRenderer.invoke('update:status'),
   updateCheck: (): Promise<IpcResult<UpdateStatusInfo>> => ipcRenderer.invoke('update:check'),
   updateDownload: (): Promise<IpcResult<UpdateStatusInfo>> => ipcRenderer.invoke('update:download'),
@@ -46,6 +48,11 @@ const api = {
     const handler = (_e: unknown, ev: UpdateEvent): void => cb(ev);
     ipcRenderer.on('update:event', handler);
     return () => { ipcRenderer.removeListener('update:event', handler); };
+  },
+  onDbSync: (cb: (s: { pending: boolean; error: string | null; retryAt: number | null }) => void): () => void => {
+    const handler = (_e: unknown, s: { pending: boolean; error: string | null; retryAt: number | null }): void => cb(s);
+    ipcRenderer.on('db:sync', handler);
+    return () => { ipcRenderer.removeListener('db:sync', handler); };
   },
   onDataChanged: (cb: (d: AppData) => void): () => void => {
     const handler = (_e: unknown, d: AppData): void => cb(d);

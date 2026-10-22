@@ -134,6 +134,16 @@ export function ensureSchema(cfg: DbConfig): void {
         db.prepare(`ALTER TABLE "${m.table}" ADD COLUMN "${m.column}" ${m.ddl}`).run();
       }
     }
+    // A student can leave school and come back on the same day, so one 'in' per
+    // day is no longer unique: the attendance key now includes the timestamp.
+    // Rewriting old keys is idempotent (old keys have two separators, new ones
+    // three) and keeps existing rows matching their in-memory twins.
+    try {
+      db.prepare(
+        'UPDATE "attendance" SET "attendance_key" = "student_id" || \'|\' || "date" || \'|\' || "kind" || \'|\' || "ts" ' +
+        'WHERE "attendance_key" IS NULL OR "attendance_key" NOT GLOB \'*|*|*|*\''
+      ).run();
+    } catch { /* table missing or read-only: the next save rewrites it */ }
   } finally {
     db.close();
   }
@@ -141,8 +151,26 @@ export function ensureSchema(cfg: DbConfig): void {
 
 // ---------- row mapping ----------
 
+/**
+ * One row per class period per day (class_event_key is UNIQUE). A teacher who
+ * scans twice in the same period can leave two events in memory; writing both
+ * would abort the whole transaction and lose every other record in that save
+ * (and make a backup fail). Keep the first arrival, which is what the grid shows.
+ */
+function firstEventPerClass(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const byKey = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const key = `${String(row.slotId)}|${String(row.date)}`;
+    const prev = byKey.get(key);
+    if (!prev || Number(row.ts ?? 0) < Number(prev.ts ?? 0)) byKey.set(key, row);
+  }
+  return [...byKey.values()];
+}
+
 function rowKey(collection: string, row: Record<string, unknown>): string {
-  if (collection === 'attendance') return `${row.studentId}|${row.date}|${row.kind}`;
+  // Timestamp included: a re-entry after a departure is a second 'in' on the
+  // same day and must not collide with the morning's row.
+  if (collection === 'attendance') return `${row.studentId}|${row.date}|${row.kind}|${row.ts}`;
   if (collection === 'classEvents') return `${row.slotId}|${row.date}`;
   return String(row.id);
 }
@@ -186,6 +214,30 @@ export function rowFromDb(collection: string, row: Record<string, unknown>): Rec
 }
 
 // ---------- connection ----------
+
+/**
+ * Writes a complete, self-contained SQLite file of `data` to `file`.
+ * Used by Settings → Backup database: the result opens like any other app
+ * database, and it works the same for this computer's data and for a snapshot
+ * pulled from the network database (no WAL side files to keep together).
+ */
+export function writeSnapshot(file: string, data: AppData): void {
+  const target = path.resolve(file);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  // Start clean so rows left over from an older backup cannot survive in it.
+  for (const p of [target, `${target}-wal`, `${target}-shm`]) {
+    try { fs.rmSync(p, { force: true }); } catch { /* in use or already gone */ }
+  }
+  const cfg: DbConfig = { enabled: true, file: target };
+  ensureSchema(cfg);
+  const conn = new DbConnection();
+  conn.connect(cfg);
+  try {
+    conn.sync(data);
+  } finally {
+    conn.disconnect();
+  }
+}
 
 export class DbConnection {
   private db: SqliteDatabase | null = null;
@@ -250,9 +302,15 @@ export class DbConnection {
     return d as unknown as AppData;
   }
 
-  /** Mirrors the whole snapshot into SQLite inside one transaction. */
-  sync(d: AppData): void {
+  /**
+   * Mirrors the whole snapshot into SQLite inside one transaction.
+   * `prune: false` only inserts and updates: nothing is ever deleted. Used when
+   * the snapshot may be older than the database (recovery, data.json import),
+   * where a delete would silently destroy logins the snapshot never saw.
+   */
+  sync(d: AppData, opts?: { prune?: boolean }): void {
     if (!this.db) throw new Error('SQLite database is not connected');
+    const prune = opts?.prune !== false;
     const db = this.db;
     const src = d as unknown as Record<string, unknown>;
 
@@ -261,15 +319,22 @@ export class DbConnection {
         const table = tableFor(c);
         const keyCol = KEY_COLUMNS[c] ?? 'id';
         const rows = (Array.isArray(src[c]) ? src[c] : []) as Array<Record<string, unknown>>;
-        const target = rows.map(r => rowToDb(c, r));
+        const mapped = (c === 'classEvents' ? firstEventPerClass(rows) : rows).map(r => rowToDb(c, r));
+        // One row per unique key: a duplicated id (e.g. a partially merged
+        // recovery file) would abort the transaction and freeze every save.
+        const byKey = new Map<string, Record<string, unknown>>();
+        for (const row of mapped) byKey.set(String(row[keyCol]), row);
+        const target = [...byKey.values()];
         const targetKeys = new Set(target.map(r => String(r[keyCol])));
 
         const existingRows = db.prepare(`SELECT "${keyCol}" AS k FROM "${table}"`).all() as Array<{ k: unknown }>;
         const existingKeys = new Set(existingRows.map(r => String(r.k)));
 
-        const delStmt = db.prepare(`DELETE FROM "${table}" WHERE "${keyCol}" = ?`);
-        for (const k of existingKeys) {
-          if (!targetKeys.has(k)) delStmt.run(k);
+        if (prune) {
+          const delStmt = db.prepare(`DELETE FROM "${table}" WHERE "${keyCol}" = ?`);
+          for (const k of existingKeys) {
+            if (!targetKeys.has(k)) delStmt.run(k);
+          }
         }
 
         for (const row of target) {

@@ -1,5 +1,6 @@
 import type { AppData, Slot } from '../shared/types';
 import { timeToMin, minutesOfDay, studentWindows } from '../shared/constants';
+import { isSchoolDay as sharedIsSchoolDay } from '../shared/reportStats';
 
 // The scan engine lives in src/shared/scan.ts so the Electron IPC handler and
 // the browser fallback (src/api.ts) run exactly one implementation — re-exported
@@ -9,11 +10,9 @@ export { processScan } from '../shared/scan';
 // Kept for compatibility with older imports of this module.
 export { minutesOfDay, studentWindows };
 
-export function isSchoolDay(d: AppData, date: string): boolean {
-  if (d.holiday.date === date || d.settings.holidayDates.includes(date)) return false;
-  const dow = new Date(date + 'T00:00:00').getDay();
-  return dow >= 1 && dow <= 5;
-}
+// One definition, shared with the scan engine and the reports so a login can
+// never be counted on a day the report refuses to list.
+export const isSchoolDay = sharedIsSchoolDay;
 
 export function slotsForDate(d: AppData, date: string): Slot[] {
   const dow = new Date(date + 'T00:00:00').getDay();
@@ -34,10 +33,15 @@ export type StudentStatus = 'early' | 'on_time' | 'late' | 'absent' | 'left';
 export function studentStatusForDate(d: AppData, studentId: string, date: string): {
   status: StudentStatus; arrivalTs?: number; departureTs?: number;
 } {
-  const evs = d.attendance.filter(e => e.studentId === studentId && e.date === date);
-  const inEv = evs.filter(e => e.kind === 'in').sort((a, b) => a.ts - b.ts)[0];
-  const outEv = evs.filter(e => e.kind === 'out').sort((a, b) => b.ts - a.ts)[0];
+  const evs = d.attendance
+    .filter(e => e.studentId === studentId && e.date === date)
+    .sort((a, b) => a.ts - b.ts);
+  const inEv = evs.find(e => e.kind === 'in');
+  const last = evs[evs.length - 1];
   if (!inEv) return { status: 'absent' };
+  // A student may come back after leaving; only the LAST event says whether
+  // they are still in school now (a morning departure alone does not).
+  const outEv = last && last.kind === 'out' ? last : undefined;
   const mins = minutesOfDay(inEv.ts);
   const w = studentWindows(d, studentId);
   const early = timeToMin(w.amIn);

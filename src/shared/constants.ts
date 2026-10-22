@@ -32,6 +32,15 @@ export const ABSENCE_REASONS = [
 /** Fixed TCP port of the LAN sharing server (Settings → Database). Open it in the firewall on the host computer. */
 export const LAN_PORT = 39500;
 
+/** A teacher login counts for a class from this many minutes before it starts… */
+export const LOGIN_EARLY_MIN = 10;
+/** …until this many minutes after it starts. */
+export const LOGIN_LATE_MIN = 50;
+/** Two scans this close together are the same person scanning twice by accident. */
+export const SCAN_DUPLICATE_MS = 60_000;
+/** A second scan with no class to attach to is a departure only after this long. */
+export const TEACHER_DEPART_AFTER_MS = 30 * 60_000;
+
 export const DEFAULT_SETTINGS: Settings = {
   schoolName: 'Mabuhay National High School',
   schoolLogo: '',

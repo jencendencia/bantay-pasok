@@ -2,7 +2,7 @@ import ExcelJS from 'exceljs';
 import type { AppData, ReportParams } from '../shared/types';
 import { timeToMin } from '../shared/constants';
 import {
-  bucketByKey, countMarks, dayMark, schoolDaysBetween, teacherOccurrences, weekKey
+  bucketByKey, countMarks, dayMark, schoolDaysBetween, teacherLoginRows, teacherOccurrences, weekKey
 } from '../shared/reportStats';
 import type { MarkCounts } from '../shared/reportStats';
 
@@ -152,6 +152,8 @@ async function teacherAttendanceWorkbook(
   }
   bySec.columns.forEach(c => { c.width = 18; });
 
+  loginAuditSheet(wb, d, p);
+
   const buf = await wb.xlsx.writeBuffer();
   return { buffer: Buffer.from(buf), filename: `Attendance_Teachers_${p.from}_${p.to}.xlsx` };
 }
@@ -211,9 +213,46 @@ async function teacherIndividualWorkbook(
   }
   log.columns.forEach(c => { c.width = 16; });
 
+  loginAuditSheet(wb, d, p, teacher.id);
+
   const buf = await wb.xlsx.writeBuffer();
   const ln = `${teacher.lastName}`.replace(/\s+/g, '');
   return { buffer: Buffer.from(buf), filename: `Attendance_${ln}_${p.from}_${p.to}.xlsx` };
+}
+
+/**
+ * Every login, including the ones no class period could claim. The class grid
+ * only shows scheduled periods, so an arrival-only login (no class that day,
+ * too early, or a timetable edited after the scan) used to leave no trace in
+ * any export. Here one row per scan is guaranteed, with what it became.
+ */
+function loginAuditSheet(wb: ExcelJS.Workbook, d: AppData, p: ReportParams, teacherId?: string): void {
+  const rows = teacherLoginRows(d, p.from, p.to, teacherId);
+  const ws = wb.addWorksheet('Teacher logins');
+  titleBlock(ws, 'Teacher logins',
+    'Every login and logout in the range, and the class it was recorded for', 5);
+  headerRow(ws, 4, ['Date', 'Teacher', 'Time', 'Type', 'Recorded for']);
+
+  let r = 5;
+  for (const row of rows) {
+    ws.getRow(r).values = [
+      row.date,
+      row.teacherName,
+      new Date(row.ts).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }),
+      row.kind === 'out' ? 'Logged out' : 'Login',
+      row.matched || 'No class matched'
+    ];
+    // Unmatched logins are the ones an admin must explain.
+    if (!row.matched) ws.getCell(r, 5).font = { color: { argb: 'FF9A3412' }, bold: true };
+    r++;
+  }
+  if (rows.length === 0) {
+    ws.getCell(r, 1).value = 'No teacher logins in this range.';
+    ws.getCell(r, 1).font = { italic: true, color: { argb: 'FF5E6E66' } };
+  }
+  ws.columns.forEach(c => { c.width = 18; });
+  ws.getColumn(2).width = 28;
+  ws.getColumn(5).width = 42;
 }
 
 async function studentAttendanceWorkbook(

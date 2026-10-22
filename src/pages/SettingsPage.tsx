@@ -17,10 +17,16 @@ export default function SettingsPage(): React.ReactElement {
   const [savedFlash, setSavedFlash] = useState(false);
   const [verifyState, setVerifyState] = useState<'idle' | 'busy' | 'ok' | 'fail'>('idle');
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
-  const [dbState, setDbState] = useState<{ enabled: boolean; lastError: string | null } | null>(null);
+  const [dbState, setDbState] = useState<{
+    enabled: boolean;
+    lastError: string | null;
+    sync?: { pending: boolean; error: string | null; retryAt: number | null };
+  } | null>(null);
   const [dbForm, setDbForm] = useState<DbConfigView | null>(null);
   const [dbMsg, setDbMsg] = useState<string | null>(null);
   const [dbBusy, setDbBusy] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMsg, setBackupMsg] = useState<string | null>(null);
   const [net, setNet] = useState<NetStatus | null>(null);
   const [netHost, setNetHost] = useState('');
   const [netMsg, setNetMsg] = useState<string | null>(null);
@@ -43,7 +49,7 @@ export default function SettingsPage(): React.ReactElement {
     void (async () => {
       const res = await api.dbStatus();
       if (res.ok && res.data) {
-        setDbState({ enabled: res.data.enabled, lastError: res.data.lastError });
+        setDbState({ enabled: res.data.enabled, lastError: res.data.lastError, sync: res.data.sync });
         setDbForm(res.data.config);
         if (res.data.net) {
           setNet(res.data.net);
@@ -77,7 +83,7 @@ export default function SettingsPage(): React.ReactElement {
   const refreshNet = async (): Promise<void> => {
     const res = await api.dbStatus();
     if (res.ok && res.data) {
-      setDbState({ enabled: res.data.enabled, lastError: res.data.lastError });
+      setDbState({ enabled: res.data.enabled, lastError: res.data.lastError, sync: res.data.sync });
       if (res.data.net) setNet(res.data.net);
     }
   };
@@ -137,6 +143,26 @@ export default function SettingsPage(): React.ReactElement {
         ? "Sharing enabled — other computers on this network can now connect to this computer's IP."
         : 'Sharing disabled.');
     await refreshNet();
+  };
+
+  /** Saves a .db copy — pulled from the main computer when this PC uses the
+   *  network database, so the backup is of the real data and not a stale file. */
+  const backupDatabase = async (): Promise<void> => {
+    setBackupBusy(true);
+    setBackupMsg(null);
+    const res = await api.dbBackup();
+    setBackupBusy(false);
+    if (!res.ok) {
+      setBackupMsg(res.error ?? 'The backup could not be made.');
+      return;
+    }
+    if (!res.data?.saved) {
+      setBackupMsg('Backup cancelled — nothing was saved.');
+      return;
+    }
+    setBackupMsg(res.data.source === 'network'
+      ? `Backup of the network database saved: ${res.data.filename}`
+      : `Backup saved: ${res.data.filename}`);
   };
 
   // Reads the chosen logo, downscaled to 512px so data.json and SQLite stay light.
@@ -542,7 +568,7 @@ export default function SettingsPage(): React.ReactElement {
                           setDbMsg('Using local JSON storage.');
                         }
                         const st = await api.dbStatus();
-                        if (st.ok && st.data) setDbState({ enabled: st.data.enabled, lastError: st.data.lastError });
+                        if (st.ok && st.data) setDbState({ enabled: st.data.enabled, lastError: st.data.lastError, sync: st.data.sync });
                       } else {
                         setDbMsg(saveRes.error ?? 'Failed to save');
                       }
@@ -558,21 +584,28 @@ export default function SettingsPage(): React.ReactElement {
                       onClick={async () => {
                         setDbBusy(true); setDbMsg(null);
                         const res = await api.dbImportJson();
-                        setDbMsg(res.ok ? 'Local data.json imported into SQLite.' : res.error ?? 'Import failed');
+                        setDbMsg(res.ok ? 'data.json merged into SQLite. Nothing already in the database was removed.' : res.error ?? 'Import failed');
                         setDbBusy(false);
                       }}
                     >
-                      Import data.json now
+                      Merge data.json into the database
                     </button>
                   )}
                 </div>
                 {dbMsg && <div className="card-note" style={{ marginTop: 8 }}>{dbMsg}</div>}
+                {dbState?.sync?.pending && (
+                  <div className="card-note" style={{ color: 'var(--red)', marginTop: 4 }}>
+                    <b>The database is behind the saved data.</b> Everything is safe in data.json on this computer and is retried automatically;
+                    a restart will also merge it back in. Do not delete or replace the database file while this is shown.
+                  </div>
+                )}
                 {dbState?.lastError && (
                   <div className="card-note" style={{ color: 'var(--red)', marginTop: 4 }}>Last database error: {dbState.lastError}</div>
                 )}
                 <div className="card-note" style={{ marginTop: 8 }}>
                   Every save writes to data.json first, then syncs to the local SQLite database file — the kiosk keeps working even if the file is locked or moved.
                   Settings, holidays and borrowed classes are stored too. Turning this off keeps all data in the local JSON file.
+                  Merging data.json only adds or updates rows; it never deletes logins the database already holds.
                 </div>
 
                 <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
@@ -641,6 +674,20 @@ export default function SettingsPage(): React.ReactElement {
                   </div>
                 </div>
                 )}
+
+                <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--line)' }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn ghost small" disabled={backupBusy} onClick={() => void backupDatabase()}>
+                      {backupBusy ? 'Backing up…' : 'Backup database'}
+                    </button>
+                    <span className="card-note" style={{ margin: 0 }}>
+                      {net.mode === 'lan'
+                        ? `Saves a copy of the database on ${net.host || 'the main computer'} to this computer.`
+                        : "Saves a copy of this computer's database that can be opened any time."}
+                    </span>
+                  </div>
+                  {backupMsg && <div className="card-note" style={{ marginTop: 8 }}>{backupMsg}</div>}
+                </div>
               </>
             )}
           </div>

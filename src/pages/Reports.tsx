@@ -11,12 +11,14 @@ const SHEET_ROWS: Record<RType, [string, string][]> = {
   teacher: [
     ['Summary', 'Totals per teacher with day-by-day marks'],
     ['Daily log', 'Every class: date, section, scheduled time, time in, minutes late, reason'],
-    ['By section', 'How often the teacher attended each section']
+    ['By section', 'How often the teacher attended each section'],
+    ['Teacher logins', 'Every login and logout, and the class it was recorded for']
   ],
   teacher_individual: [
     ['Summary', 'Scheduled, attended, late and absent counts with attendance and punctuality rates'],
     ['Frequency', 'The same counts broken down per week, per month and per term'],
-    ['Daily log', 'Every class: date, section, scheduled time, time in, minutes late, reason']
+    ['Daily log', 'Every class: date, section, scheduled time, time in, minutes late, reason'],
+    ['Teacher logins', 'Every login and logout, and the class it was recorded for']
   ],
   student: [
     ['Summary', 'Each student per day: present or absent, with rate'],

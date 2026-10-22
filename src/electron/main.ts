@@ -5,7 +5,7 @@ import './userData';
 import {
   loadData, patchData, saveData, flushSave, getDataDir,
   initStore, getDbConfig, applyDbConfig, connectSqlite, disconnectSqlite,
-  importJsonToSqlite, dbStatus, getNetConfig, setNetConfig, isLanMode
+  importJsonToSqlite, dbStatus, getNetConfig, setNetConfig, isLanMode, onSyncState
 } from './store';
 import { startLanServer, stopLanServer, lanServerRunning } from './lanHost';
 import type { LanHandlers } from './lanHost';
@@ -20,11 +20,27 @@ import { buildReport } from './reports';
 import { todayStr } from './timeutil';
 import type { Announcement, IpcResult, NetConfig, NetStatus, ReportParams, ScanResult, UpdateEvent } from '../shared/types';
 import type { DbConfig } from './db';
+import { writeSnapshot } from './db';
 import { hashPassword } from '../shared/seed';
 import { initUpdater, checkForUpdates, downloadUpdate, installUpdate, updateStatus, setGithubToken } from './updater';
 
 let adminWin: BrowserWindow | null = null;
 let scanWin: BrowserWindow | null = null;
+
+// Only one copy of the app may run. Each instance keeps its own in-memory
+// snapshot and a save mirrors the whole dataset, so an older copy open in the
+// background would delete every login the newer copy recorded.
+const SINGLE_INSTANCE = app.requestSingleInstanceLock();
+if (!SINGLE_INSTANCE) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!adminWin) return;
+    if (adminWin.isMinimized()) adminWin.restore();
+    adminWin.show();
+    adminWin.focus();
+  });
+}
 const gsm = new GsmModule(() => loadData());
 const emailer = new EmailModule(() => loadData());
 
@@ -184,6 +200,16 @@ async function remoteSnapshot(): Promise<AppData> {
   const r = await lanGetData();
   if (!r.ok || !r.data) throw new Error(r.error ?? 'Cannot reach the network database.');
   return r.data;
+}
+
+/** Strict snapshot for backups: never falls back to the last cached copy. */
+async function remoteLiveSnapshot(): Promise<AppData> {
+  const r = await lanReq('GET', '/data');
+  if (!r.ok || !r.body || r.body.ok !== true || !r.body.data) {
+    throw new Error(r.error ?? 'Cannot reach the network database.');
+  }
+  markLanOk();
+  return r.body.data as AppData;
 }
 
 /** Revision poll: the host bumps a counter on each write, so we only fetch
@@ -566,6 +592,40 @@ function registerIpc(): void {
     } catch (err) { return fail(err); }
   });
 
+  // Settings → Database → Backup database. In LAN mode the copy is taken from
+  // the main computer over the network; otherwise from this computer's data.
+  ipcMain.handle('db:backup', async (): Promise<IpcResult<{ saved: boolean; filename: string; source: 'network' | 'local' }>> => {
+    try {
+      const viaNetwork = isLanMode();
+      if (!viaNetwork) await flushSave();
+      const snapshot = viaNetwork ? await remoteLiveSnapshot() : loadData();
+      const defaultName = `bantay-pasok-backup-${todayStr()}.db`;
+      let defaultPath = defaultName;
+      try { defaultPath = path.join(app.getPath('documents'), defaultName); } catch { /* no documents folder */ }
+      const opts = {
+        title: viaNetwork ? 'Save a backup of the network database' : 'Save a backup of this database',
+        defaultPath,
+        filters: [{ name: 'SQLite database', extensions: ['db'] }]
+      };
+      const res = adminWin && !adminWin.isDestroyed()
+        ? await dialog.showSaveDialog(adminWin, opts)
+        : await dialog.showSaveDialog(opts);
+      if (res.canceled || !res.filePath) {
+        return ok({ saved: false, filename: res.filePath ?? defaultName, source: viaNetwork ? 'network' : 'local' });
+      }
+      const file = /\.db$/i.test(res.filePath) ? res.filePath : `${res.filePath}.db`;
+      // Never write the backup over the database the app is working in.
+      if (!viaNetwork && dbStatus().enabled) {
+        const live = path.resolve(getDbConfig().file).toLowerCase();
+        if (path.resolve(file).toLowerCase() === live) {
+          throw new Error('That is the database the app is using — choose a different file name.');
+        }
+      }
+      writeSnapshot(file, snapshot);
+      return ok({ saved: true, filename: file, source: viaNetwork ? 'network' : 'local' });
+    } catch (err) { return fail(err); }
+  });
+
   // Network / storage mode (Settings → Database): test and apply.
   ipcMain.handle('net:save', async (_e, cfg: NetConfig, testOnly: boolean): Promise<IpcResult<{ ok: boolean; error?: string }>> => {
     try {
@@ -620,7 +680,11 @@ app.on('before-quit', e => {
 });
 
 void app.whenReady().then(async () => {
+  if (!SINGLE_INSTANCE) return;
   registerIpc();
+  // Every window (admin and scanner) shows a warning while the database is
+  // behind the JSON snapshot, so a failed sync is never silent at the kiosk.
+  onSyncState(s => broadcast('db:sync', s));
   await initStore();
   if (isLanMode()) {
     // Client of a network database: no local storage and no GSM/SMTP loop here

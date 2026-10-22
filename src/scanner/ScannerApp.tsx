@@ -60,6 +60,18 @@ export default function ScannerApp(): React.ReactElement {
   const [videoPin, setVideoPin] = useState<string | null>(null);
   const [advTick, setAdvTick] = useState(0);
 
+  // The kiosk must not keep greeting people silently while saves are only
+  // reaching data.json and not the database.
+  const [dbPending, setDbPending] = useState<{ error: string | null } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void api.dbStatus().then(res => {
+      if (alive && res.ok && res.data?.sync?.pending) setDbPending({ error: res.data.sync.error });
+    });
+    const off = api.onDbSync(s => setDbPending(s.pending ? { error: s.error } : null));
+    return () => { alive = false; off(); };
+  }, []);
+
   useEffect(() => {
     const t = setInterval(() => {
       // Keep input focused unless user is interacting with tester
@@ -145,6 +157,12 @@ export default function ScannerApp(): React.ReactElement {
   return (
     <div style={{ height: '100vh', position: 'relative' }} onClick={() => inputRef.current?.focus()}>
       <TitleBar title="Swiped Perfectly Just-in-time · Scanner" theme="dark" target="scanner" controls={false} />
+      {dbPending && (
+        <div className="sync-banner" role="alert">
+          <strong>Database not updating.</strong>
+          <span>Scans are still saved on this computer and will be sent when the database is writable again. Leave this screen open.</span>
+        </div>
+      )}
       {/* Hidden input to receive QR / Barcode scanner keyboard emulation */}
       <input
         ref={inputRef}
@@ -205,14 +223,14 @@ export default function ScannerApp(): React.ReactElement {
             </div>
 
             <div className="scan-right-footer">
-              {activeScan.kind === 'teacher' ? (
+              {activeScan.label ? (
                 <div className="now-teaching-box">
-                  <div className="now-teaching-lbl">Now teaching</div>
+                  <div className="now-teaching-lbl">{activeScan.label}</div>
                   <div className="now-teaching-val">{activeScan.detail || 'Scheduled Class Period'}</div>
                 </div>
               ) : activeScan.detail ? (
-                <div className="sms-confirmation-pill">
-                  <span className="check-circle">✓</span>
+                <div className="sms-confirmation-pill" style={activeScan.ok ? undefined : { background: 'rgba(255,255,255,0.08)' }}>
+                  <span className="check-circle">{activeScan.ok ? '✓' : '!'}</span>
                   <span>{activeScan.detail}</span>
                 </div>
               ) : null}

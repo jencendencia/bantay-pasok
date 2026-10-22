@@ -238,12 +238,15 @@ export interface AppData {
 export interface ScanResult {
   ok: boolean;
   message: string;
-  kind: 'teacher' | 'student_in' | 'student_out' | 'unknown' | 'duplicate';
+  /** 'closed' = school is out / no classes today: the scan is logged, nothing is counted. */
+  kind: 'teacher' | 'teacher_out' | 'student_in' | 'student_out' | 'unknown' | 'duplicate' | 'closed';
   personId?: string;
   name?: string;
   /** First + last name for the scanner's left identity panel (the greeting stays first-name-only). */
   fullName?: string;
   detail?: string;
+  /** Heading above `detail` on the scanner ("Now teaching", "Login", "Logged out"). */
+  label?: string;
   statusCategory?: 'early' | 'on_time' | 'late' | 'departure' | 'teacher' | 'error';
   qr?: string;
   subDetail?: string;

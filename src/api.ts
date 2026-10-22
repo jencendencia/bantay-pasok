@@ -8,6 +8,13 @@ export interface DbConfigView {
   file: string;
 }
 
+/** Health of the data.json → SQLite pipeline (see Settings → Database). */
+export interface DbSyncState {
+  pending: boolean;
+  error: string | null;
+  retryAt: number | null;
+}
+
 export interface BantayApi {
   getData(): Promise<IpcResult<AppData>>;
   login(username: string, password: string): Promise<IpcResult<{ role: 'admin' | 'teacher' }>>;
@@ -27,13 +34,15 @@ export interface BantayApi {
   addAnnouncement(a: Announcement): Promise<IpcResult>;
   removeAnnouncement(id: string): Promise<IpcResult>;
   appInfo(): Promise<IpcResult<{ dataDir: string; today: string; platform: string }>>;
-  dbStatus(): Promise<IpcResult<{ enabled: boolean; lastError: string | null; config: DbConfigView; net: NetStatus }>>;
+  dbStatus(): Promise<IpcResult<{ enabled: boolean; lastError: string | null; sync: DbSyncState; config: DbConfigView; net: NetStatus }>>;
   saveDbConfig(cfg: DbConfigView, testOnly: boolean): Promise<IpcResult<{ ok: boolean; version?: string; error?: string }>>;
   /** Test or apply the storage mode / network database settings (net:save IPC). */
   saveNetConfig(cfg: NetConfig, testOnly: boolean): Promise<IpcResult<{ ok: boolean; error?: string }>>;
   dbConnect(): Promise<IpcResult>;
   dbDisconnect(): Promise<IpcResult>;
   dbImportJson(): Promise<IpcResult>;
+  /** Saves a SQLite copy of the database (from the network host when in LAN mode). */
+  dbBackup(): Promise<IpcResult<{ saved: boolean; filename: string; source: 'network' | 'local' }>>;
   updateStatus(): Promise<IpcResult<UpdateStatusInfo>>;
   updateCheck(): Promise<IpcResult<UpdateStatusInfo>>;
   updateDownload(): Promise<IpcResult<UpdateStatusInfo>>;
@@ -41,6 +50,8 @@ export interface BantayApi {
   updateSetToken(token: string): Promise<IpcResult>;
   onUpdateEvent(cb: (e: UpdateEvent) => void): () => void;
   onDataChanged(cb: (d: AppData) => void): () => void;
+  /** Fires when a save could not reach SQLite, and again once it catches up. */
+  onDbSync(cb: (s: DbSyncState) => void): () => void;
 }
 
 declare global {
@@ -226,6 +237,7 @@ function createBrowserFallback(): BantayApi {
         data: {
           enabled: false,
           lastError: null,
+          sync: { pending: false, error: null, retryAt: null },
           config: { enabled: false, file: '' },
           net: {
             mode: 'local',
@@ -255,6 +267,9 @@ function createBrowserFallback(): BantayApi {
     async dbImportJson() {
       return { ok: false, error: 'SQLite is only available in the desktop app' };
     },
+    async dbBackup() {
+      return { ok: false, error: 'Database backups are only available in the desktop app' } as IpcResult<{ saved: boolean; filename: string; source: 'network' | 'local' }>;
+    },
     async updateStatus() {
       return { ok: false, error: 'Software updates are only available in the desktop app' } as IpcResult<UpdateStatusInfo>;
     },
@@ -276,6 +291,10 @@ function createBrowserFallback(): BantayApi {
     onDataChanged(cb) {
       listeners.add(cb);
       return () => { listeners.delete(cb); };
+    },
+    onDbSync(_cb) {
+      // The browser fallback has no SQLite stage to fall behind.
+      return () => {};
     }
   };
 }

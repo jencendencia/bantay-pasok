@@ -4,7 +4,7 @@
 // so the preview and the file can never disagree, and so the late-rule lives in
 // exactly one place.
 import type { AppData, Slot } from './types';
-import { timeToMin, todayStr } from './constants';
+import { fmt12, LOGIN_EARLY_MIN, LOGIN_LATE_MIN, minutesOfDay, timeToMin, todayStr } from './constants';
 
 export type SlotMark = 'P' | 'L' | 'A' | 'OL' | 'M';
 
@@ -26,9 +26,22 @@ export function markFor(d: AppData, slotId: string, date: string, slotStartMin: 
 }
 
 /**
- * Weekday school days in [from, to], using local calendar dates — the same
- * clock the app stores records with (todayStr). Never toISOString(): that
- * shifts the grid back a day in UTC+8 and silently drops the range's last day.
+ * Whether the school runs on this date. Weekdays count unless declared a
+ * holiday; a Saturday/Sunday counts only when classes are actually scheduled
+ * that day (make-up classes), so weekend logins are not silently dropped from
+ * reports while ordinary weekends stay excluded.
+ */
+export function isSchoolDay(d: AppData, date: string): boolean {
+  if (d.holiday.date === date || d.settings.holidayDates.includes(date)) return false;
+  const dow = new Date(date + 'T00:00:00').getDay();
+  if (dow >= 1 && dow <= 5) return true;
+  return d.slots.some(s => s.days.includes(dow));
+}
+
+/**
+ * School days in [from, to], using local calendar dates — the same clock the
+ * app stores records with (todayStr). Never toISOString(): that shifts the
+ * grid back a day in UTC+8 and silently drops the range's last day.
  */
 export function schoolDaysBetween(d: AppData, from: string, to: string): string[] {
   const out: string[] = [];
@@ -36,8 +49,7 @@ export function schoolDaysBetween(d: AppData, from: string, to: string): string[
   const end = new Date(to + 'T00:00:00');
   while (cur <= end) {
     const iso = todayStr(cur);
-    const dow = cur.getDay();
-    if (dow >= 1 && dow <= 5 && !d.settings.holidayDates.includes(iso) && d.holiday.date !== iso) out.push(iso);
+    if (isSchoolDay(d, iso)) out.push(iso);
     cur.setDate(cur.getDate() + 1);
   }
   return out;
@@ -62,7 +74,9 @@ export interface Occurrence {
  */
 export function teacherOccurrences(d: AppData, from: string, to: string, teacherId?: string): Occurrence[] {
   const days = schoolDaysBetween(d, from, to);
-  const slots = d.slots.filter(s => (!teacherId || s.teacherId === teacherId) && s.days.some(x => x >= 1 && x <= 5));
+  // No weekday filter here: a Saturday make-up class is a real occurrence once
+  // schoolDaysBetween has decided the date counts (see isSchoolDay).
+  const slots = d.slots.filter(s => !teacherId || s.teacherId === teacherId);
   const out: Occurrence[] = [];
   for (const date of days) {
     const dow = new Date(date + 'T00:00:00').getDay();
@@ -72,6 +86,73 @@ export function teacherOccurrences(d: AppData, from: string, to: string, teacher
     }
   }
   return out;
+}
+
+/** "Grade 7 - Rizal · Science · 8:33 AM" for one period, without the class program's name separator. */
+export function describeSlot(d: AppData, slot: Slot): string {
+  const sec = d.sections.find(x => x.id === slot.sectionId);
+  const name = sec ? sec.name.split(' - ')[0] : '';
+  return `${name ? `${name} · ` : ''}${slot.subject} · ${fmt12(slot.start)}`;
+}
+
+/**
+ * Every teacher login in a date range, with what it became. This is the audit
+ * the dashboard grid cannot show: the grid is built from class periods, so a
+ * login outside a period window — or on a day the teacher had no class — has no
+ * cell to appear in. One row per scan, nothing dropped.
+ */
+export interface TeacherLoginRow {
+  scanId: string;
+  date: string;
+  teacherId: string;
+  teacherName: string;
+  ts: number;
+  kind: 'in' | 'out';
+  /** Class the login was recorded for; 'Logged out' / '' when it was not one. */
+  matched: string;
+}
+
+export function teacherLoginRows(
+  d: AppData, from: string, to: string, teacherId?: string
+): TeacherLoginRow[] {
+  const rows: TeacherLoginRow[] = [];
+  for (const sc of d.scans) {
+    if (sc.role !== 'teacher') continue;
+    if (teacherId && sc.personId !== teacherId) continue;
+    const date = todayStr(new Date(sc.ts));
+    if (date < from || date > to) continue;
+    const t = d.teachers.find(x => x.id === sc.personId);
+    if (!t) continue;
+    let matched = '';
+    if (sc.kind === 'out') {
+      matched = 'Logged out';
+    } else {
+      const ev = d.classEvents.find(e => e.teacherId === t.id && e.date === date && e.ts === sc.ts);
+      if (ev) {
+        const slot = d.slots.find(s => s.id === ev.slotId);
+        matched = slot ? describeSlot(d, slot) : '';
+      } else {
+        // A repeat login inside a class the teacher is already recorded for (or
+        // one attached by hand) still belongs to that class.
+        const at = minutesOfDay(sc.ts);
+        const dow = new Date(date + 'T00:00:00').getDay();
+        const slot = d.slots
+          .filter(s => s.teacherId === t.id && s.days.includes(dow))
+          .filter(s => d.classEvents.some(e => e.slotId === s.id && e.date === date))
+          .filter(s => {
+            const delta = at - timeToMin(s.start);
+            return delta >= -LOGIN_EARLY_MIN && delta <= LOGIN_LATE_MIN;
+          })
+          .sort((a, b) => Math.abs(at - timeToMin(a.start)) - Math.abs(at - timeToMin(b.start)))[0];
+        matched = slot ? `${describeSlot(d, slot)} · repeat login` : '';
+      }
+    }
+    rows.push({
+      scanId: sc.id, date, teacherId: t.id,
+      teacherName: `${t.lastName}, ${t.firstName}`, ts: sc.ts, kind: sc.kind, matched
+    });
+  }
+  return rows.sort((a, b) => a.ts - b.ts);
 }
 
 export interface MarkCounts {

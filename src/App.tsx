@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { DataProvider, useData, useHashRoute } from './store';
 import { api } from './api';
 import { TitleBar } from './ui';
@@ -28,6 +28,19 @@ function Shell(): React.ReactElement {
   const { data, now } = useData();
   const [route, nav] = useHashRoute();
 
+  // A save that could not reach SQLite leaves data.json ahead of the database.
+  // Warn until a retry succeeds: the rows exist, but nothing reading SQLite
+  // (reports, a restart) can see them yet.
+  const [syncIssue, setSyncIssue] = useState<{ error: string | null } | null>(null);
+  React.useEffect(() => {
+    let alive = true;
+    void api.dbStatus().then(res => {
+      if (alive && res.ok && res.data?.sync?.pending) setSyncIssue({ error: res.data.sync.error });
+    });
+    const off = api.onDbSync(s => setSyncIssue(s.pending ? { error: s.error } : null));
+    return () => { alive = false; off(); };
+  }, []);
+
   const smsPending = useMemo(
     () => (data ? data.sms.filter(m => m.status === 'retrying' || m.status === 'failed').length : 0),
     [data]
@@ -50,6 +63,16 @@ function Shell(): React.ReactElement {
   return (
     <div style={{ height: '100vh', position: 'relative', overflow: 'hidden' }}>
       <TitleBar title={data ? data.settings.schoolName : 'Swiped Perfectly Just-in-time'} theme="light" target="admin" />
+      {syncIssue && (
+        <div className="sync-banner" role="alert">
+          <strong>Database not updating.</strong>
+          <span>
+            New scans are saved on this computer but have not reached the database yet.
+            Retrying automatically — leave the app open until this clears.
+            {syncIssue.error && <em className="sync-banner-error">Last error: {syncIssue.error}</em>}
+          </span>
+        </div>
+      )}
       <div className="app">
       <aside className="sidebar">
         <div className="brand">
