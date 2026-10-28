@@ -15,9 +15,8 @@
     "start": "npm run build && electron .",
     "icon": "node scripts/gen-icon.js",
     "db:test": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/sqlite-test.cjs",
-    "dist:ia32": "npm run build && electron-builder --win --ia32",
-    "dist:dir": "npm run build && electron-builder --win --dir",
-    "dist": "npm run build && electron-builder --win"
+    "dist:dir": "npm run build && electron-builder --win --dir --x64",
+    "dist": "npm run build && electron-builder --win --x64"
   },
   "build": {
     "appId": "com.bantaypasok.attendance",
@@ -57,7 +56,7 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
       "shortcutName": "Swiped Perfectly Just-in-time",
-      "artifactName": "SwipedPerfectlyJustInTime.Setup.${version}.${ext}"
+      "artifactName": "SwipedPerfectlyJustInTime.Setup.${version}.${arch}.${ext}"
     }
   },
   "dependencies": {

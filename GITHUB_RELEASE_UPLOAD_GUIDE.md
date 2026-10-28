@@ -2,8 +2,8 @@
 
 This guide covers building and publishing a Windows installer for
 Swiped Perfectly Just-in-time from this repository: the 64-bit build for Windows
-10 and later (the one the in-app updater delivers), an optional 32-bit build,
-and the separate Electron 22 build for Windows 7.
+10 and later (the one the in-app updater delivers) and the separate 64-bit
+Electron 22 build for Windows 7. There is no 32-bit build.
 
 ## Build the Windows 10/11 installer
 
@@ -20,25 +20,15 @@ and the separate Electron 22 build for Windows 7.
    - `SwipedPerfectlyJustInTime.Setup.<version>.x64.exe.blockmap`
    - `latest.yml`
 
-`npm run dist` passes `--x64`, and `build.nsis.artifactName` includes `${arch}`,
-so the 64-bit installer is what `latest.yml` names: **the in-app updater always
-delivers the x64 build**. The architecture is part of the file name, so the
-32-bit installer can never overwrite the updater's file.
+`npm run dist` passes `--x64`, so the build is always 64-bit and the file it
+produces is the one `latest.yml` names: **the in-app updater always delivers the
+x64 build**. The Windows 7 package keeps its own `.win7.` name, so the two can
+never overwrite each other.
 
 Do not rename the installer or manually edit `latest.yml`; electron-builder
-generates matching filenames, hashes, and sizes.
-
-### Optional 32-bit build
-
-```powershell
-npm run dist:ia32
-```
-
-This writes `release-ia32/SwipedPerfectlyJustInTime.Setup.<version>.ia32.exe`
-(plus its blockmap and a local `latest.yml`). The separate output directory is
-deliberate: building 32-bit must never replace `release/latest.yml`, or the
-updater would start delivering 32-bit again. Attach the `.ia32.exe` to the same
-GitHub release as an extra download.
+generates matching filenames, hashes, and sizes. There is deliberately no 32-bit
+target: `dist:ia32` was removed, so `latest.yml` can no longer be pointed at an
+ia32 installer by accident.
 
 ## Publish the release
 
@@ -55,10 +45,9 @@ gh release create v<version> `
   --generate-notes
 ```
 
-Then attach any optional builds to that same release:
+Then attach the Windows 7 build to that same release:
 
 ```powershell
-gh release upload v<version> "release-ia32\SwipedPerfectlyJustInTime.Setup.<version>.ia32.exe"
 gh release upload v<version> "release-win7\SwipedPerfectlyJustInTime.Setup.<version>.win7.exe"
 ```
 
@@ -79,7 +68,7 @@ Windows 10 and later run the normal build above. Electron 23 dropped Windows 7,
 so Windows 7 needs a separate build on **Electron 22.3.27**, which is what
 `electron-builder.win7.json` configures (x64, per-machine NSIS, output
 `release-win7/`, artifact `SwipedPerfectlyJustInTime.Setup.<version>.win7.exe`,
-`publish: null`). It is not part of `dist`, `dist:ia32`, or `dist:dir`; it must
+`publish: null`). It is not part of `dist` or `dist:dir`; it must
 be invoked explicitly.
 
 ### Build
@@ -177,8 +166,8 @@ test above should print ABI 130.
 
 ### Publish
 
-Add the win7 installer to the release that the 32-bit build created — do not
-open a second release for it:
+Add the win7 installer to the release the main build created — do not open a
+second release for it:
 
 ```bash
 gh release upload v<version> "release-win7/SwipedPerfectlyJustInTime.Setup.<version>.win7.exe" --clobber
