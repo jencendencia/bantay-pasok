@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
 import { Modal, Pill, Segmented } from '../ui';
-import { fmt12, timeToMin, minToTime, gradePeriodsFor, windowsForSection } from '../shared/constants';
+import { fmt12, timeToMin, gradePeriodsFor, windowsForSection } from '../shared/constants';
 import { StudentFace } from '../components/StudentFace';
 import type { Section, SlotTimeWindows, Student } from '../shared/types';
 
@@ -875,7 +875,7 @@ function TimeRulesCard({ section }: { section: Section }): React.ReactElement {
       <div className="card-note" style={{ marginTop: 10 }}>
         Changes save immediately for <b>{section.name}</b> only — other sections keep the global rules.
         {' '}{savedFlash && <span style={{ color: 'var(--green-700)', fontWeight: 700 }}>✓ Saved</span>}
-        {' '}Dismissal scans count between the time-out windows; {minToTime(timeToMin(w.amOut) + 90)}–{minToTime(timeToMin(w.pmIn))} scans keep the student checked in.
+        {' '}Time-out scans count from {fmt12(w.amOut)} until {fmt12(w.pmIn)}, and again from {fmt12(w.pmOut)}; a scan in between keeps the student checked in. Students marked out who scan after {fmt12(w.pmIn)} come back in.
       </div>
     </div>
   );

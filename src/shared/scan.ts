@@ -94,13 +94,60 @@ export function processScan(d: AppData, raw: string, nowMs?: number): ScanResult
   return studentScan(d, student as Student, now, date);
 }
 
-/** Which kind of scan this is for a student who is already in: departure or duplicate. */
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** The next class this section still has today after nowMin, as "1:00 PM". */
+function nextClassStart(d: AppData, student: Student, date: string, afterMin: number): string | null {
+  const dow = new Date(date + 'T00:00:00').getDay();
+  const next = d.slots
+    .filter(s => s.sectionId === student.sectionId && s.days.includes(dow) && timeToMin(s.start) > afterMin)
+    .sort((a, b) => timeToMin(a.start) - timeToMin(b.start))[0];
+  return next ? fmt12(next.start) : null;
+}
+
+/**
+ * The next day the school actually runs, skipping weekends and declared
+ * holidays. Used so a goodbye never promises "tomorrow" on a Friday.
+ */
+function nextSchoolDay(d: AppData, date: string): { date: string; gap: number } | null {
+  const base = new Date(date + 'T00:00:00');
+  for (let i = 1; i <= 14; i++) {
+    const nx = new Date(base);
+    nx.setDate(nx.getDate() + i);
+    const iso = todayStr(nx);
+    if (isSchoolDay(d, iso)) return { date: iso, gap: i };
+  }
+  return null;
+}
+
+/** Sign-off that matches what comes next: tomorrow, Monday, or after a break. */
+function goodbyeLine(d: AppData, date: string): string {
+  const nx = nextSchoolDay(d, date);
+  if (!nx) return 'See you soon!\nTravel safe.';
+  if (nx.gap === 1) return 'See you tomorrow!\nTravel safe.';
+  const dayName = WEEKDAY_NAMES[new Date(nx.date + 'T00:00:00').getDay()];
+  const today = new Date(date + 'T00:00:00').getDay();
+  // Friday → Monday is a weekend, not a mysterious two-day absence.
+  if (today === 5 && dayName === 'Monday') return 'Have a great weekend!\nTravel safe.';
+  return `See you on ${dayName}!\nTravel safe.`;
+}
+
+/** Whether a scan by a student who is already in school is a time-out right now. */
 function departureDue(d: AppData, student: Student, nowMin: number): boolean {
-  // Departure only counts inside the grade's AM-out or PM-out windows.
+  // Two windows only: the lunch break (AM time-out until afternoon classes
+  // start) and the end of the day (PM time-out onwards). The lunch window used
+  // to run amOut + 90 and swallow the first half hour of the afternoon, so a
+  // 1:10 PM scan by a student who never scanned out at noon was recorded as a
+  // departure — an out row plus a "left school" text to the parent for someone
+  // arriving for class.
   const w = studentWindows(d, student.id);
   const amOut = timeToMin(w.amOut);
+  const pmIn = timeToMin(w.pmIn);
   const pmOut = timeToMin(w.pmOut);
-  return (nowMin >= amOut && nowMin < amOut + 90) || nowMin >= pmOut;
+  // A section whose PM time-in is not after its AM time-out keeps a 90-minute
+  // lunch window rather than an empty one.
+  const lunchEnd = pmIn > amOut ? pmIn : amOut + 90;
+  return (nowMin >= amOut && nowMin < lunchEnd) || nowMin >= pmOut;
 }
 
 function teacherScan(d: AppData, teacher: Teacher, now: number, date: string): ScanResult {
@@ -287,21 +334,37 @@ function studentScan(d: AppData, student: Student, now: number, date: string): S
     };
   }
 
-  // Still in school: departure once the grade's departure window opens (or
-  // after dismissal, whenever they finally scan out).
-  if (departureDue(d, student, nowMin) || nowMin > timeToMin(w.pmOut)) {
+  // Still in school (their last record is an arrival): only a time-out window
+  // makes this scan a departure. After the PM time-in it never does — they are
+  // back for the afternoon or simply scanned twice, and the day's record must
+  // stay "in school" either way.
+  if (departureDue(d, student, nowMin)) {
     d.attendance.push({ id: nextId('att'), studentId: student.id, date, ts: now, kind: 'out' });
     logScan(d, student.id, 'student', now, 'out');
+    // Two time-outs are not the end of the day: the noon time-out is a lunch
+    // break (they come back at 1 PM), and a Friday time-out ends the week. Both
+    // used to say "See you tomorrow", which was wrong in opposite directions.
+    const back = nextClassStart(d, student, date, nowMin);
+    if (back) {
+      return {
+        ...base, ok: true, kind: 'student_out', statusCategory: 'departure',
+        message: 'Lunch break!\nSee you after lunch.',
+        detail: `Your parent has been notified · back for ${back}`
+      };
+    }
     return {
       ...base, ok: true, kind: 'student_out', statusCategory: 'departure',
-      message: 'See you tomorrow!\nTravel safe.',
+      message: goodbyeLine(d, date),
       detail: 'Your parent has been notified that you left school'
     };
   }
 
   logScan(d, student.id, 'student', now, 'in');
+  // Not an error: the student is simply in school and the next time-out has not
+  // opened yet, so the pane shows the normal arrival colours.
   return {
-    ...base, ok: false, kind: 'duplicate', statusCategory: 'error',
-    message: `Done for today, ${student.firstName}. See you tomorrow!`
+    ...base, ok: false, kind: 'duplicate', statusCategory: 'on_time',
+    message: `You're already checked in, ${student.firstName}.`,
+    detail: `Time-out opens at ${fmt12(w.pmOut)}`
   };
 }

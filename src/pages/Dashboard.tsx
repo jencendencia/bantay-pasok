@@ -104,6 +104,9 @@ export default function Dashboard(): React.ReactElement {
   const startedSlots = todaysSlots.filter(s => nowMin >= timeToMin(s.start));
   const teachersIn = startedSlots.filter(s => data.classEvents.some(e => e.slotId === s.id && e.date === dateStr)).length;
   const studentsPresent = new Set(data.attendance.filter(e => e.date === dateStr && e.kind === 'in').map(e => e.studentId)).size;
+  // Students who have timed out today — lunch or dismissal. Same scan records
+  // the student boxes and the roster use, so the count cannot disagree with them.
+  const studentsTimedOut = new Set(data.attendance.filter(e => e.date === dateStr && e.kind === 'out').map(e => e.studentId)).size;
   const smsSent = data.sms.filter(m => m.status === 'sent' && new Date(m.ts).toDateString() === now.toDateString()).length;
 
   // Students present per section (for the tally under "Latest scans")
@@ -196,7 +199,13 @@ export default function Dashboard(): React.ReactElement {
     const lateIn = !!ev && late > data.settings.graceMinutes;
 
     const cls = isBrw ? 'borrowed' : inClass || lateIn ? 'in' : st ? 'needs-reason' : 'no-scan';
-    const reasonLabel = st ? (ABSENCE_REASONS.find(r => r.id === st.reason)?.label ?? '') : '';
+    const reasonLabel = st ? (ABSENCE_REASONS.find(r => r.id === st.reason)?.label ?? String(st.reason ?? '')) : '';
+    // A recorded reason is the admin's statement about this slot, so the box
+    // must always show it — even when a scan later landed (which used to hide
+    // it behind "In 9:21am") and even for a borrowed class.
+    const reasonText = st
+      ? (reasonLabel === 'Others' && st.note ? st.note : [reasonLabel, st.note].filter(Boolean).join(' · '))
+      : '';
 
     return (
       <button
@@ -210,11 +219,12 @@ export default function Dashboard(): React.ReactElement {
           }
         }}
         title={
-          isBrw ? 'Class is borrowed'
-            : ev ? 'Teacher is in'
-              : login ? `Teacher logged in at ${clock(login.ts)} but no class period matched`
-                : isHoliday ? 'Locked — it is a holiday'
-                  : 'Click to record a reason'
+          isHoliday ? 'Locked — it is a holiday'
+            : [
+              isBrw ? 'Class is borrowed' : ev ? 'Teacher is in' : '',
+              st ? `Recorded reason: ${reasonText || 'Excused'}` : '',
+              !ev && !st && login ? `Teacher logged in at ${clock(login.ts)} but no class period matched` : ''
+            ].filter(Boolean).join(' · ') || 'Click to record a reason'
         }
       >
         <span className="s-subject">{slot.subject}</span>
@@ -224,14 +234,9 @@ export default function Dashboard(): React.ReactElement {
           <>
             <span className="s-teacher">{teacher ? `${teacher.firstName} ${teacher.lastName}` : '—'}</span>
             {ev && <span className="s-in">In {fmt12(slot.start).replace(' ', '').toLowerCase()}</span>}
-            {!ev && login && (
+            {!ev && !st && login && (
               <span className="s-reason" style={{ color: 'var(--muted)', fontSize: '11px' }}>
                 Login {clock(login.ts)} · not counted
-              </span>
-            )}
-            {!ev && st && (
-              <span className="s-reason" style={{ color: 'var(--red)' }}>
-                {reasonLabel || 'Excused'}
               </span>
             )}
             {!ev && !st && !login && (
@@ -240,6 +245,11 @@ export default function Dashboard(): React.ReactElement {
               </span>
             )}
           </>
+        )}
+        {st && (
+          <span className="s-reason" style={{ color: 'var(--red)' }}>
+            {reasonText || 'Excused'}
+          </span>
         )}
       </button>
     );
@@ -357,6 +367,9 @@ export default function Dashboard(): React.ReactElement {
         )}
         <span className="stat-chip">
           Students present <b>{studentsPresent} / {data.students.length}</b>
+        </span>
+        <span className="stat-chip" title="Students who have scanned out today — lunch break or dismissal">
+          Students timed out <b>{studentsTimedOut}</b>
         </span>
         <span className="stat-chip">
           SMS sent today <b>{smsSent}</b>
