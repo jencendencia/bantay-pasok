@@ -95,6 +95,7 @@ npm run dist:dir       # unpacked folder only (faster, for quick testing)
 - The GSM modem driver (`serialport`) is rebuilt for Electron automatically during packaging and unpacked from the asar at runtime.
 - User data (`data.json`, `sqlite.json`, `bantay-pasok.db`) lives in `%APPDATA%\Bantay Pasok\bantay-pasok-data\` — it survives app updates and uninstalling. Back that folder up when moving schools/PCs.
 - If SmartScreen warns on first run (unsigned build), click *More info → Run anyway*.
+- Windows 7 cannot run this build (Electron 33 needs Windows 10+). It needs the separate Electron 22 package; the steps and the native-module workaround are in [GITHUB_RELEASE_UPLOAD_GUIDE.md](GITHUB_RELEASE_UPLOAD_GUIDE.md#windows-7-installer-electron-22).
 
 ## Notes
 
