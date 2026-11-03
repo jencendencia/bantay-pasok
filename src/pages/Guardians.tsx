@@ -1,8 +1,15 @@
 import React, { useState } from 'react';
 import { useData } from '../store';
 import { api } from '../api';
-import { Modal, Segmented, alertDialog } from '../ui';
+import { Modal, Segmented, alertDialog, confirmDialog } from '../ui';
 import { parseCsvTable } from './Sections';
+import type { Guardian } from '../shared/types';
+
+/** Display name for a guardian. The name fields are optional, so fall back to contact details. */
+export function guardianName(g: { lastName: string; firstName: string; number?: string; email?: string }): string {
+  const name = [g.lastName, g.firstName].map(x => (x || '').trim()).filter(Boolean).join(', ');
+  return name || g.number || g.email || 'Unnamed guardian';
+}
 
 function csvGet(r: Record<string, string>, keys: string[]): string {
   for (const k of keys) if (r[k]) return r[k];
@@ -16,7 +23,24 @@ export default function Guardians(): React.ReactElement {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<'alpha' | 'section'>('alpha');
   const [sectionFilter, setSectionFilter] = useState('all');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<Guardian | null>(null);
   if (!data) return <div className="empty">Loading…</div>;
+
+  /** Delete the given guardians after confirming; their students are unlinked in the same save. */
+  const deleteGuardians = async (ids: Set<string>): Promise<void> => {
+    const count = data.guardians.filter(g => ids.has(g.id)).length;
+    if (count === 0) { setSelected(new Set()); return; }
+    const unlinked = data.students.filter(s => s.guardianId && ids.has(s.guardianId)).length;
+    const message = `Delete ${count} guardian${count > 1 ? 's' : ''}?` +
+      (unlinked ? ` ${unlinked} student${unlinked > 1 ? 's' : ''} will no longer be linked to a guardian.` : '');
+    if (!(await confirmDialog({ message, destructive: true }))) return;
+    const students = data.students.map(s =>
+      s.guardianId && ids.has(s.guardianId) ? { ...s, guardianId: null } : s);
+    await api.patchData({ guardians: data.guardians.filter(g => !ids.has(g.id)), students });
+    setSelected(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
+    void refresh();
+  };
 
   const sectionName = (id: string | null): string =>
     id ? data.sections.find(s => s.id === id)?.name ?? '' : '';
@@ -75,6 +99,15 @@ export default function Guardians(): React.ReactElement {
             <span style={{ fontSize: 13, color: 'var(--muted)', fontWeight: 500 }}> (Total: {data.guardians.length})</span>
           </h3>
           <div className="spacer" />
+          {selected.size > 0 && (
+            <button
+              className="btn danger small"
+              onClick={() => void deleteGuardians(selected)}
+              title="Delete every checked guardian"
+            >
+              🗑 Delete selected ({selected.size})
+            </button>
+          )}
           <span className="toolbar-label">Sort by</span>
           <Segmented
             options={[
@@ -106,27 +139,55 @@ export default function Guardians(): React.ReactElement {
         <table className="table">
           <thead>
             <tr>
+              <th style={{ width: 34 }}>
+                <input
+                  type="checkbox"
+                  checked={list.length > 0 && list.every(({ g }) => selected.has(g.id))}
+                  onChange={e => {
+                    const next = new Set(selected);
+                    for (const { g } of list) { if (e.target.checked) next.add(g.id); else next.delete(g.id); }
+                    setSelected(next);
+                  }}
+                  title="Select every guardian in the list"
+                />
+              </th>
               <th>Name of Parent/Guardian</th>
               <th>Mobile Number</th>
               <th>Email Address</th>
               <th>Children</th>
               <th>Section</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {list.map(({ g, kids }) => (
               <tr key={g.id}>
-                <td><b>{g.lastName}, {g.firstName}</b></td>
+                <td style={{ width: 34 }}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(g.id)}
+                    onChange={e => {
+                      const next = new Set(selected);
+                      if (e.target.checked) next.add(g.id); else next.delete(g.id);
+                      setSelected(next);
+                    }}
+                  />
+                </td>
+                <td><b>{guardianName(g)}</b></td>
                 <td>{g.number || <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                 <td>{g.email || <span style={{ color: 'var(--muted)' }}>—</span>}</td>
                 <td>{kids.length ? kids.map(k => `${k.firstName} ${k.lastName}`).join(', ') : '—'}</td>
                 <td>{kids[0] ? sectionName(kids[0].sectionId) || <span style={{ color: 'var(--muted)' }}>—</span> : <span style={{ color: 'var(--muted)' }}>—</span>}</td>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                  <button className="btn ghost small" onClick={() => setEditing(g)} title="Edit guardian">✎</button>{' '}
+                  <button className="btn ghost small" onClick={() => void deleteGuardians(new Set([g.id]))} title="Delete guardian">🗑</button>
+                </td>
               </tr>
             ))}
             {list.length === 0 && data.guardians.length > 0 && (
-              <tr><td colSpan={5} className="empty">No guardians match the current search or section filter</td></tr>
+              <tr><td colSpan={7} className="empty">No guardians match the current search or section filter</td></tr>
             )}
-            {data.guardians.length === 0 && <tr><td colSpan={5} className="empty">No guardians yet</td></tr>}
+            {data.guardians.length === 0 && <tr><td colSpan={7} className="empty">No guardians yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -147,22 +208,57 @@ export default function Guardians(): React.ReactElement {
           />
         </Modal>
       )}
+
+      {editing && (
+        <Modal title="Edit guardian" onClose={() => setEditing(null)} width={500}>
+          <GuardianForm
+            existing={editing}
+            students={data.students}
+            sections={data.sections}
+            onDone={async (g, childIds) => {
+              // Picked children become this guardian's; the rest of their children are unlinked.
+              const students = data.students.map(s => {
+                if (childIds.includes(s.id)) return s.guardianId === g.id ? s : { ...s, guardianId: g.id };
+                return s.guardianId === g.id ? { ...s, guardianId: null } : s;
+              });
+              await api.patchData({ guardians: data.guardians.map(x => (x.id === g.id ? g : x)), students });
+              void refresh();
+              setEditing(null);
+            }}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
 
 function GuardianForm({
+  existing,
   onDone,
   students,
   sections
 }: {
-  onDone: (g: { id: string; lastName: string; firstName: string; number: string; address: string; email?: string }, childIds: string[]) => void;
-  students: { id: string; qr: string; lastName: string; firstName: string; sex: string; sectionId: string | null }[];
+  /** Pass the guardian being edited; omit it to add a new one. */
+  existing?: Guardian;
+  onDone: (g: Guardian, childIds: string[]) => void;
+  students: { id: string; qr: string; lastName: string; firstName: string; sex: string; sectionId: string | null; guardianId: string | null }[];
   sections: { id: string; name: string }[];
 }): React.ReactElement {
-  const [f, setF] = useState({ lastName: '', firstName: '', number: '', address: '', email: '' });
+  const [f, setF] = useState({
+    lastName: existing?.lastName ?? '',
+    firstName: existing?.firstName ?? '',
+    number: existing?.number ?? '',
+    address: existing?.address ?? '',
+    email: existing?.email ?? ''
+  });
   const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<{ id: string; label: string }[]>([]);
+  // Start with the children already linked so removing one unlinks it on save.
+  const [picked, setPicked] = useState<{ id: string; label: string }[]>(
+    existing
+      ? students.filter(s => s.guardianId === existing.id)
+          .map(s => ({ id: s.id, label: `${s.firstName} ${s.lastName}` }))
+      : []
+  );
 
   const matches = query.trim().length >= 1
     ? students
@@ -179,8 +275,8 @@ function GuardianForm({
   return (
     <>
       <div className="form-row">
-        <div className="field"><label>First name</label><input value={f.firstName} onChange={e => setF({ ...f, firstName: e.target.value })} /></div>
-        <div className="field"><label>Last name</label><input value={f.lastName} onChange={e => setF({ ...f, lastName: e.target.value })} /></div>
+        <div className="field"><label>First name <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label><input value={f.firstName} onChange={e => setF({ ...f, firstName: e.target.value })} /></div>
+        <div className="field"><label>Last name <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label><input value={f.lastName} onChange={e => setF({ ...f, lastName: e.target.value })} /></div>
       </div>
       <div className="field"><label>Mobile number <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional – for SMS alerts)</span></label><input value={f.number} placeholder="+63 917 555 0142" onChange={e => setF({ ...f, number: e.target.value })} /></div>
       <div className="field"><label>Address</label><input value={f.address} onChange={e => setF({ ...f, address: e.target.value })} /></div>
@@ -229,8 +325,10 @@ function GuardianForm({
       </div>
 
       <div className="modal-actions">
-        <button className="btn primary" disabled={!f.lastName || !f.firstName}
-          onClick={() => onDone({ id: `g_${Date.now().toString(36)}`, ...f }, picked.map(p => p.id))}>Save guardian</button>
+        <button className="btn primary"
+          onClick={() => onDone({ id: existing?.id ?? `g_${Date.now().toString(36)}`, ...f }, picked.map(p => p.id))}>
+          {existing ? 'Save changes' : 'Save guardian'}
+        </button>
       </div>
     </>
   );

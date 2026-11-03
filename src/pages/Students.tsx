@@ -4,6 +4,7 @@ import { api } from '../api';
 import { Modal, Pill, AvatarIcon, printNodes, confirmDialog, alertDialog } from '../ui';
 import { IdCard, type IdCardProps } from '../components/IdCard';
 import { StudentFace } from '../components/StudentFace';
+import { guardianName } from './Guardians';
 import { renderIdCardJpeg, downloadDataUrl, downloadIdCardsZip, type IdCardZipItem } from '../components/idCardImage';
 import type { AppData, Student } from '../shared/types';
 
@@ -453,7 +454,7 @@ function StudentFormModal({ existing, onClose }: { existing?: Student; onClose: 
           <select value={form.guardianId ?? ''} onChange={e => setForm({ ...form, guardianId: e.target.value })}>
             <option value="">— No guardian linked —</option>
             {guardians.map(g => (
-              <option key={g.id} value={g.id}>{g.lastName}, {g.firstName}{g.number ? ` · ${g.number}` : ''}</option>
+              <option key={g.id} value={g.id}>{guardianName(g)}{(g.lastName || g.firstName) && g.number ? ` · ${g.number}` : ''}</option>
             ))}
           </select>
         </div>

@@ -9,6 +9,7 @@
   "files": [
     "dist/**/*",
     "dist-electron/**/*",
+    "build/icon.ico",
     "package.json"
   ],
   "asarUnpack": [
@@ -23,8 +24,7 @@
         "arch": ["x64"]
       }
     ],
-    "icon": "build/icon.png",
-    "signAndEditExecutable": false
+    "icon": "build/icon.ico"
   },
   "publish": null,
   "nsis": {

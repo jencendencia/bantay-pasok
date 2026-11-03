@@ -45,6 +45,9 @@ const gsm = new GsmModule(() => loadData());
 const emailer = new EmailModule(() => loadData());
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
+// Window/taskbar icon. build/ is packaged into the asar, so this path also
+// resolves in an installed copy; Windows picks the best size from the .ico.
+const APP_ICON = path.join(app.getAppPath(), 'build', 'icon.ico');
 
 function createAdminWindow(): void {
   adminWin = new BrowserWindow({
@@ -55,6 +58,7 @@ function createAdminWindow(): void {
     show: false,
     frame: false,
     backgroundColor: '#e9efe9',
+    icon: APP_ICON,
     title: 'Swiped Perfectly Just-in-time · Admin',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -80,6 +84,7 @@ function createScannerWindow(): void {
     show: false,
     frame: false,
     backgroundColor: '#0e3a2f',
+    icon: APP_ICON,
     title: 'Swiped Perfectly Just-in-time · Scanner',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

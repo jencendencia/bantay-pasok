@@ -91,7 +91,7 @@ npm run dist:dir       # unpacked folder only (faster, for quick testing)
 ```
 
 - Output: `release/SwipedPerfectlyJustInTime.Setup.<version>.exe` — run it on the school computer and follow the wizard (choose the install folder, desktop shortcut is created).
-- The app icon lives in `build/icon.png` (regenerate with `npm run icon`).
+- The app icon lives in `build/` — `icon.ico` (taskbar, desktop and Start-menu shortcuts, the exe) and `icon.png` (1024² installer art), both regenerated with `npm run icon`.
 - The GSM modem driver (`serialport`) is rebuilt for Electron automatically during packaging and unpacked from the asar at runtime.
 - User data (`data.json`, `sqlite.json`, `bantay-pasok.db`) lives in `%APPDATA%\Bantay Pasok\bantay-pasok-data\` — it survives app updates and uninstalling. Back that folder up when moving schools/PCs.
 - If SmartScreen warns on first run (unsigned build), click *More info → Run anyway*.
